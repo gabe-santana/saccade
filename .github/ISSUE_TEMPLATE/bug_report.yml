@@ -1,0 +1,61 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please search [existing issues](https://github.com/gabe-santana/saccade/issues) first.
+        **Security issues:** please don't report them here; see [SECURITY.md](https://github.com/gabe-santana/saccade/blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: The smallest code or CLI command that shows the problem.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output and traceback
+      description: Full error output. Running with `-vv` (CLI) or `progress=print` helps. **Remove API keys and private URLs.**
+      render: text
+  - type: textarea
+    id: media
+    attributes:
+      label: Media details
+      description: Output of `saccade info <video> --json` (container, codecs, duration, resolution). Please don't attach private videos.
+      render: json
+  - type: input
+    id: version
+    attributes:
+      label: Saccade version
+      description: Output of `saccade --version`
+      placeholder: saccade 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux, Other]
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Python version and hardware
+      placeholder: "Python 3.12, i7-14650HX, RTX 5050 (device=cuda)"
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Transcription / VAD, Frames, Search / context, ask() / LLM, GPU, CLI, Installation, Docs, Other]

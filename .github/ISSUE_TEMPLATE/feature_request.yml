@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the use case first, e.g. "I index lecture recordings and need to find the slide where X was shown".
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would the API or CLI look like? A short code snippet is ideal.
+      render: python
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Project fit
+      description: Saccade is local-first with few dependencies (see CONTRIBUTING.md → Project principles).
+      options:
+        - label: This works without sending media off the machine, or is opt-in.
+        - label: I'd be willing to help implement it.

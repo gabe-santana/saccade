@@ -36,6 +36,7 @@ print(video.ask("What did they decide about the release date?"))
 |---|---|
 | [API reference](api-reference.md) | Every public class, method, parameter and return type |
 | [Extending Saccade](extending.md) | Custom ASR backends, VAD, and LLM clients |
+| [Architecture and limitations](architecture.md) | How the pipeline works inside, design decisions, source layout, known limits |
 | [Troubleshooting](troubleshooting.md) | Common errors and how to fix them |
 
 ## Requirements at a glance

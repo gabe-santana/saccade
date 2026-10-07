@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="Saccade">
+  <title>Saccade</title>
+  <defs>
+    <radialGradient id="glow" cx="0.2" cy="0.1" r="1">
+      <stop offset="0" stop-color="#1E1B4B"/>
+      <stop offset="1" stop-color="#020617"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+  
+  <g transform="translate(96 150) scale(1.328125)">
+    <defs>
+      <linearGradient id="bg-s" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#6366F1"/>
+        <stop offset="0.55" stop-color="#3B82F6"/>
+        <stop offset="1" stop-color="#06B6D4"/>
+      </linearGradient>
+      <linearGradient id="iris-s" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#1E1B4B"/>
+        <stop offset="1" stop-color="#0B1026"/>
+      </linearGradient>
+      <clipPath id="eye-s">
+        <path d="M14 64 C 36 30, 92 30, 114 64 C 92 98, 36 98, 14 64 Z"/>
+      </clipPath>
+    </defs>
+    <rect width="128" height="128" rx="30" fill="url(#bg-s)"/>
+    <path d="M14 64 C 36 30, 92 30, 114 64 C 92 98, 36 98, 14 64 Z" fill="#F8FAFC"/>
+    <g clip-path="url(#eye-s)">
+      <circle cx="44" cy="64" r="20" fill="#312E81" opacity="0.14"/>
+      <circle cx="57" cy="64" r="20" fill="#312E81" opacity="0.28"/>
+      <circle cx="72" cy="64" r="21" fill="url(#iris-s)"/>
+      <path d="M66.5 53.5 L66.5 74.5 L84 64 Z" fill="#22D3EE" stroke="#22D3EE" stroke-width="2.5" stroke-linejoin="round"/>
+    </g>
+    <circle cx="80.5" cy="54.5" r="3.2" fill="#FFFFFF" opacity="0.9"/>
+  </g>
+  <text x="300" y="250" font-family="'Segoe UI', Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="104" font-weight="700" letter-spacing="-2.5" fill="#F8FAFC">saccade</text>
+  <text x="305" y="306" font-family="'Segoe UI', Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="34" fill="#94A3B8">Fast, local video context for LLMs</text>
+  <text x="100" y="420" font-family="ui-monospace, 'Cascadia Code', 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="27" fill="#E2E8F0" xml:space="preserve"><tspan fill="#94A3B8">video = </tspan><tspan fill="#22D3EE">saccade.Video</tspan><tspan fill="#94A3B8">(</tspan><tspan fill="#4ADE80">"interview.mp4"</tspan><tspan fill="#94A3B8">, llm=llm)</tspan></text>
+  <text x="100" y="462" font-family="ui-monospace, 'Cascadia Code', 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="27" fill="#E2E8F0" xml:space="preserve"><tspan fill="#22D3EE">video.ask</tspan><tspan fill="#94A3B8">(</tspan><tspan fill="#4ADE80">"How did the interview go?"</tspan><tspan fill="#94A3B8">)</tspan></text>
+  <text x="100" y="526" font-family="'Segoe UI', Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="24" fill="#64748B">Local Whisper + VAD · representative frames · timestamped search · any LLM · CPU or GPU</text>
+  <text x="100" y="584" font-family="ui-monospace, 'Cascadia Code', 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="24" fill="#22D3EE">pip install saccade-video</text>
+</svg>

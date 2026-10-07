@@ -1,16 +1,15 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+requires = ["hatchling>=1.24", "hatch-fancy-pypi-readme>=24.1"]
 build-backend = "hatchling.build"
 
 [project]
 name = "saccade-video"  # the import name is still `saccade` ("saccade" is taken on PyPI)
-dynamic = ["version"]
+dynamic = ["version", "readme"]
 description = "Fast, local video context for LLMs: transcripts, representative frames, timestamped search and ask() over any video, on CPU or GPU."
-readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "Gabriel Santana" }]
-keywords = ["video", "transcription", "whisper", "rag", "search", "asr", "vad", "offline"]
+keywords = ["video", "transcription", "whisper", "rag", "llm", "search", "asr", "vad", "multimodal", "offline"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -22,6 +21,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
     "Topic :: Text Processing :: Indexing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Typing :: Typed",
 ]
 # faster-whisper brings CTranslate2 (ASR), PyAV (FFmpeg bindings, used for all media
@@ -44,16 +44,38 @@ saccade = "saccade.cli:main"
 [project.urls]
 Homepage = "https://github.com/gabe-santana/saccade"
 Documentation = "https://github.com/gabe-santana/saccade/tree/main/docs"
+Repository = "https://github.com/gabe-santana/saccade"
 Issues = "https://github.com/gabe-santana/saccade/issues"
+Changelog = "https://github.com/gabe-santana/saccade/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
 path = "src/saccade/_version.py"
+
+# PyPI renders the README without the repository around it, so relative links and images are
+# rewritten to absolute GitHub URLs at build time. The README itself keeps relative paths.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '(src|srcset)="(?!https?://)([^"]+)"'
+replacement = '\g<1>="https://raw.githubusercontent.com/gabe-santana/saccade/main/\g<2>"'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = 'href="(?!https?://|#|mailto:)([^"]+)"'
+replacement = 'href="https://github.com/gabe-santana/saccade/blob/main/\g<1>"'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\((?!https?://|#|mailto:)([^)]+)\)'
+replacement = '](https://github.com/gabe-santana/saccade/blob/main/\g<1>)'
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/saccade"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/saccade", "tests", "docs", "README.md", "LICENSE", "pyproject.toml"]
+include = ["src/saccade", "tests", "docs", "README.md", "CHANGELOG.md", "LICENSE", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
