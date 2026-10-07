@@ -3,12 +3,13 @@ name: Publish to PyPI
 # Releases are published with PyPI Trusted Publishing (OIDC): no API token is stored in
 # GitHub. See RELEASING.md for the one-time setup on PyPI / TestPyPI.
 #
-# - Publishing a GitHub release (tag vX.Y.Z) uploads to PyPI.
+# - Pushing a version tag uploads to PyPI and then creates the GitHub release:
+#       git tag v0.1.0 && git push origin v0.1.0
 # - "Run workflow" (manual) uploads to TestPyPI by default, to rehearse a release.
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       target:
@@ -36,7 +37,7 @@ jobs:
       - run: python -m pip install build twine
 
       - name: Check that the release tag matches the package version
-        if: github.event_name == 'release'
+        if: github.ref_type == 'tag'
         run: |
           version=$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/saccade/_version.py').read_text()).group(1))")
           tag="${GITHUB_REF_NAME#v}"
@@ -100,7 +101,7 @@ jobs:
   publish-pypi:
     name: Upload to PyPI
     needs: [build, smoke-test]
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -113,3 +114,24 @@ jobs:
           name: dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub release
+    needs: publish-pypi
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Create the release with the built distributions attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Install: \`pip install saccade-video==${GITHUB_REF_NAME#v}\` — https://pypi.org/project/saccade-video/${GITHUB_REF_NAME#v}/"
