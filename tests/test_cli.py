@@ -87,7 +87,8 @@ def test_context_and_info(capsys, tone_video: Path, cache_dir: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("fmt", "marker"), [("srt", "-->"), ("vtt", "WEBVTT"), ("json", '"segments"')]
+    ("fmt", "marker"),
+    [("srt", "-->"), ("vtt", "WEBVTT"), ("md", "# tones"), ("json", '"segments"')],
 )
 def test_transcribe_formats(
     capsys, tone_video: Path, cache_dir: Path, tmp_path: Path, fmt: str, marker: str

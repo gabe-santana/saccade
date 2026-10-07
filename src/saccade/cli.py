@@ -142,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("transcribe", help="print the transcript (streams while transcribing)")
     p.add_argument("path", type=Path)
-    p.add_argument("-f", "--format", choices=["text", "srt", "vtt", "json"], default="text")
+    p.add_argument("-f", "--format", choices=["text", "srt", "vtt", "md", "json"], default="text")
     p.add_argument("-o", "--output", type=Path, help="write to this file instead of stdout")
     p.add_argument("--force", action="store_true", help="redo the transcript even if cached")
     _add_video_options(p)
@@ -271,6 +271,7 @@ def cmd_transcribe(args: argparse.Namespace, progress: ProgressPrinter) -> int:
         "text": lambda t: str(t) + "\n",
         "srt": Transcript.to_srt,
         "vtt": Transcript.to_vtt,
+        "md": lambda t: t.to_markdown(title=video.name),
         "json": lambda t: t.to_json() + "\n",
     }
     rendered = renderers[args.format](transcript)

@@ -33,7 +33,8 @@ Prints the transcript, streaming lines as they are transcribed.
 
 ```bash
 saccade transcribe meeting.mp4
-saccade transcribe meeting.mp4 -f srt -o meeting.srt     # formats: text, srt, vtt, json
+saccade transcribe meeting.mp4 -f srt -o meeting.srt     # formats: text, srt, vtt, md, json
+saccade transcribe meeting.mp4 -f md -o meeting.md
 ```
 
 ### `search`

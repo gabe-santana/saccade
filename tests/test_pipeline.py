@@ -321,6 +321,9 @@ def test_transcript_exports(indexed) -> None:
     srt = transcript.to_srt()
     assert re.match(r"1\n00:00:0[12],\d{3} --> 00:00:0[45],\d{3}\nThe deployment failed", srt)
     assert re.match(r"WEBVTT\n\n00:00:0[12]\.\d{3} --> ", transcript.to_vtt())
+    markdown = transcript.to_markdown(title="meeting.mp4")
+    assert markdown.startswith("# meeting.mp4\n\n**[0:02.0]** The deployment failed")
+    assert "\n\n**[1:15.0]**" in markdown
     assert len(transcript.chunks) >= 1
     chunk_segments = [sid for c in indexed.chunks() for sid in c.segment_ids]
     assert chunk_segments == [s.id for s in transcript.segments]

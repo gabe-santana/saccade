@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from saccade.models.segment import TranscriptSegment
-from saccade.utils.time import format_span, format_srt_time, format_vtt_time
+from saccade.utils.time import format_span, format_srt_time, format_timestamp, format_vtt_time
 
 TranscriptStatus = Literal["complete", "partial", "running", "failed", "empty"]
 
@@ -79,6 +79,12 @@ class Transcript:
             for s in self.segments
         ]
         return "WEBVTT\n\n" + "\n".join(cues)
+
+    def to_markdown(self, *, title: str | None = None) -> str:
+        """Render the transcript as timestamped Markdown paragraphs."""
+        heading = f"# {title or 'Transcript'}\n\n"
+        paragraphs = [f"**[{format_timestamp(s.start)}]** {s.text}" for s in self.segments]
+        return heading + "\n\n".join(paragraphs) + "\n"
 
     def to_dict(self) -> dict[str, Any]:
         return {
