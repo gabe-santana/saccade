@@ -1,0 +1,89 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "saccade"
+version = "0.1.0"
+description = "Fast, local video context for LLMs: multilingual transcripts, timestamped evidence and RAG-ready search, entirely on your CPU."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Gabriel Santana" }]
+keywords = ["video", "transcription", "whisper", "rag", "search", "asr", "vad", "offline"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Text Processing :: Indexing",
+    "Typing :: Typed",
+]
+# faster-whisper brings CTranslate2 (ASR), PyAV (FFmpeg bindings, used for all media
+# decoding) and onnxruntime (Silero VAD). No PyTorch.
+dependencies = [
+    "faster-whisper>=1.2,<2",
+    "av>=12",
+    "numpy>=1.24",
+    "onnxruntime>=1.16",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10", "psutil>=5.9"]
+
+[project.scripts]
+saccade = "saccade.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/bds-datasolution/saccade"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/saccade"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/saccade", "tests", "benchmarks", "README.md", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: runs the real faster-whisper + Silero stack (needs a local model; set SACCADE_INTEGRATION=1)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PL", "PT", "TID", "ANN"]
+ignore = [
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004",
+    "PLC0415",  # heavy optional runtimes (CTranslate2, onnxruntime) are imported lazily
+    "ANN401",
+    "RUF001", "RUF002", "RUF003",  # multilingual text and en dashes are intentional
+]
+
+[tool.ruff.lint.pycodestyle]
+max-line-length = 115  # long SQL and user-facing messages; the formatter still targets 100
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "PLR", "PT011", "PT018", "E501"]
+"examples/**" = ["E501"]
+"benchmarks/**" = ["ANN", "PLR"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+files = ["src/saccade"]
+
+[[tool.mypy.overrides]]
+module = ["av", "av.*", "faster_whisper", "faster_whisper.*", "onnxruntime", "psutil"]
+ignore_missing_imports = true
