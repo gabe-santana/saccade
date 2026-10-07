@@ -243,3 +243,27 @@ def test_answer_token_usage(interview) -> None:
         "q", "a", [], [], "full", usage={"prompt_tokens": 30, "completion_tokens": 12}
     )
     assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (30, 12, 42)
+
+
+def test_clients_send_tools(server) -> None:
+    from saccade.explore import TOOLS
+
+    base, recorder = server
+    llm = saccade.azure(endpoint=base, api_key="k", deployment="gpt-5-mini")
+    assert llm.supports_tools
+    llm.complete(MESSAGES, tools=TOOLS, tool_choice="none")
+    body = recorder.requests[-1]["body"]
+    assert body["tools"] == TOOLS and body["tool_choice"] == "none"
+    llm.complete(MESSAGES)
+    assert "tools" not in recorder.requests[-1]["body"]
+    assert not saccade.ollama("llama3.1").supports_tools
+
+
+def test_reasoning_effort_is_sent_only_when_set(server) -> None:
+    base, recorder = server
+    saccade.azure(
+        endpoint=base, api_key="k", deployment="gpt-5-mini", reasoning_effort="low"
+    ).complete(MESSAGES)
+    assert recorder.requests[-1]["body"]["reasoning_effort"] == "low"
+    saccade.azure(endpoint=base, api_key="k", deployment="gpt-4o").complete(MESSAGES)
+    assert "reasoning_effort" not in recorder.requests[-1]["body"]

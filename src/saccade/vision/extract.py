@@ -73,7 +73,9 @@ def extract_frames(
 
     reporter(Stage.FRAMES, "Extracting representative frames", position=0.0)
     try:
-        for sample in sample_frames(path, sample_fps=config.sample_fps):
+        for sample in sample_frames(
+            path, sample_fps=config.sample_fps, keyframes_only=config.keyframes_only
+        ):
             sampled += 1
             candidate = Candidate(sample.time, sample.thumb, dhash(sample.hash_input), sample.frame)
             for decision in selector.offer(candidate):

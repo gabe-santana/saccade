@@ -24,7 +24,8 @@ class Answer:
         frames: The images that were sent.
         mode: ``"full"`` (whole transcript sent) or ``"retrieved"`` (relevant passages only).
         model: Model name reported by the endpoint.
-        usage: Token usage reported by the endpoint.
+        usage: Token usage reported by the endpoint (summed over all exploration steps).
+        steps: What the model did while exploring, e.g. ``"Zooming into 6:15"``.
     """
 
     question: str
@@ -34,6 +35,7 @@ class Answer:
     mode: Literal["full", "retrieved"]
     model: str | None = None
     usage: dict[str, Any] = field(default_factory=dict)
+    steps: list[str] = field(default_factory=list)
 
     @property
     def input_tokens(self) -> int | None:
@@ -44,6 +46,26 @@ class Answer:
     def output_tokens(self) -> int | None:
         """Completion tokens billed by the endpoint, including hidden reasoning."""
         return _usage(self.usage, "completion_tokens", "output_tokens")
+
+    @property
+    def cached_tokens(self) -> int:
+        """Input tokens served from the provider's prompt cache (billed at a large discount)."""
+        details = (
+            self.usage.get("prompt_tokens_details") or self.usage.get("input_tokens_details") or {}
+        )
+        value = details.get("cached_tokens") if isinstance(details, dict) else None
+        return value if isinstance(value, int) else 0
+
+    @property
+    def reasoning_tokens(self) -> int:
+        """Output tokens a reasoning model spent thinking (included in ``output_tokens``)."""
+        details = (
+            self.usage.get("completion_tokens_details")
+            or self.usage.get("output_tokens_details")
+            or {}
+        )
+        value = details.get("reasoning_tokens") if isinstance(details, dict) else None
+        return value if isinstance(value, int) else 0
 
     @property
     def total_tokens(self) -> int | None:
@@ -59,6 +81,7 @@ class Answer:
             "mode": self.mode,
             "model": self.model,
             "usage": self.usage,
+            "steps": self.steps,
             "evidence": [e.to_dict() for e in self.evidence],
             "frames": [f.to_dict() for f in self.frames],
         }

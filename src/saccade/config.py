@@ -18,11 +18,13 @@ FingerprintMode = Literal["sampled", "strict"]
 VisualStrategy = Literal["auto", "scenes", "interval", "screen", "off"]
 
 PROFILES: dict[str, dict[str, Any]] = {
-    "fast": {"model": "base", "compute_type": "int8", "beam_size": 1},
-    "balanced": {"model": "small", "compute_type": "int8", "beam_size": 1},
-    "accurate": {"model": "medium", "compute_type": "int8", "beam_size": 5},
+    "fast": {"model": "base", "compute_type": "auto", "beam_size": 1},
+    "balanced": {"model": "small", "compute_type": "auto", "beam_size": 1},
+    "accurate": {"model": "medium", "compute_type": "auto", "beam_size": 5},
 }
-"""Model presets used by ``profile=``. They only touch model, quantization and beam size."""
+"""Model presets used by ``profile=``. They only touch model, quantization and beam size.
+
+``compute_type="auto"`` means int8 on CPU and float16 on GPU."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,8 +35,11 @@ class ASRConfig:
         model: A faster-whisper model name (``"small"``, ``"large-v3"``, ...) or a path to a
             local CTranslate2 model directory. Multilingual models are the default; English-only
             ``*.en`` models work but cannot transcribe other languages.
-        compute_type: CTranslate2 quantization. ``int8`` is the fastest on CPU.
-        device: ``"cpu"`` (default) or ``"cuda"``/``"auto"`` if CTranslate2 was built with GPU support.
+        compute_type: CTranslate2 quantization. ``"auto"`` (default) is ``int8`` on CPU and
+            ``float16`` on GPU; any CTranslate2 type such as ``int8_float16`` can be forced.
+        device: ``"cpu"`` (default), ``"cuda"`` (NVIDIA GPU, needs ``pip install "saccade-video[gpu]"``)
+            or ``"auto"`` (GPU when available).
+        batch_size: Speech chunks transcribed together on GPU. Ignored on CPU.
         beam_size: 1 is greedy decoding (fastest); 5 is Whisper's accuracy default.
         language: ISO-639-1 code such as ``"pt"``, or ``None`` to detect it automatically.
         word_timestamps: Also store per-word timings. Off by default: it costs extra decoding time.
@@ -43,14 +48,17 @@ class ASRConfig:
     """
 
     model: str = "small"
-    compute_type: str = "int8"
+    compute_type: str = "auto"
     device: str = "cpu"
     beam_size: int = 1
     language: str | None = None
     word_timestamps: bool = False
     carry_context: bool = True
+    batch_size: int = 16
 
     def __post_init__(self) -> None:
+        if self.batch_size < 1:
+            raise ConfigError("ASRConfig.batch_size must be >= 1.")
         if not self.model:
             raise ConfigError("ASRConfig.model must be a model name or a path.")
         if self.beam_size < 1:
@@ -136,6 +144,8 @@ class VisualConfig:
         interval_s: Spacing for ``interval`` (and the periodic fallback of ``auto``).
         max_width: Stored frames are downscaled to at most this width (JPEG).
         max_frames: Hard cap per video.
+        keyframes_only: Decode only keyframes (typically one every 2–10 s). About 5x faster
+            frame extraction on long or high-resolution videos, at coarser time resolution.
     """
 
     strategy: VisualStrategy = "auto"
@@ -144,6 +154,7 @@ class VisualConfig:
     max_width: int = 1280
     jpeg_quality: int = 3  # FFmpeg qscale: 2 (best) .. 31 (worst)
     max_frames: int = 1000
+    keyframes_only: bool = False
 
     def __post_init__(self) -> None:
         if self.strategy not in get_args(VisualStrategy):

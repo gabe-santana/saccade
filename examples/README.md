@@ -1,47 +1,78 @@
-# Examples
+# Examples: ask an LLM about a video
 
-Put your video at `examples/interview.mp4`, then run the scripts from the repository root.
+| Script | Runs Whisper on | Frame sampling |
+|---|---|---|
+| [simple_cpu.py](simple_cpu.py) | CPU | Default sampling |
+| [simple_gpu.py](simple_gpu.py) | NVIDIA GPU | Keyframes only |
 
-## ask_interview.py: ask an LLM about the video
+Indexing time depends on your hardware, video length, and processing settings.
+The index is cached and reused on subsequent runs with the same video and settings.
+
+Both scripts ask an Azure AI Foundry model to summarize a video, then print the answer
+and token usage. Change the question to ask about your own video's content:
 
 ```python
 import saccade
 
-llm = saccade.azure(
-    endpoint="https://<your-resource>.openai.azure.com", api_key="<your-key>", deployment="gpt-4o"
-)
+# Reads AZURE_AI_ENDPOINT, AZURE_AI_API_KEY and AZURE_AI_DEPLOYMENT from the environment.
+video = saccade.Video("examples/video.mp4", llm=saccade.azure())
 
-video = saccade.Video("examples/interview.mp4", llm=llm)
+answer = video.ask("Summarize the content of the video.", progress=print)
 
-print(video.ask("How was the interview?", progress=print))
+print(answer)
+print(f"Tokens: {answer.input_tokens} in + {answer.output_tokens} out = {answer.total_tokens}")
 ```
 
-```bash
-pip install -e .
-python examples/ask_interview.py
-```
+The GPU version adds two options to `saccade.Video`:
 
-What `ask()` does:
+- `device="cuda"` runs Whisper on the GPU.
+- `visual=saccade.VisualConfig(keyframes_only=True)` takes frames from the video's keyframes
+  only, so frame extraction keeps up with the GPU.
 
-1. Transcribes the audio and picks representative frames (the images) **on your machine**.
-   This happens only the first time; the result is cached, so later questions start
-   immediately.
-2. Sends your LLM the timestamped transcript plus up to 12 frames from the video.
-3. Tells the LLM to answer only from that evidence and to cite timestamps.
+## Run it
 
-`answer.evidence` and `answer.frames` show exactly what was sent.
+1. Install Saccade from the repository root. For the GPU example, include the `gpu` extra:
 
-You can also leave the arguments out of `saccade.azure()` and set `AZURE_AI_ENDPOINT`,
-`AZURE_AI_API_KEY` and `AZURE_AI_DEPLOYMENT` instead. The endpoint can be any URL the
-Foundry portal shows for your deployment.
+   ```bash
+   pip install -e .            # CPU
+   pip install -e ".[gpu]"     # GPU: adds NVIDIA's CUDA libraries
+   ```
 
-Other LLMs:
+   The GPU needs an NVIDIA card with a recent driver. The CUDA libraries come from pip, so
+   there is no separate CUDA toolkit to install.
 
-- **OpenAI:** `saccade.openai("gpt-4o")`
-- **Local Ollama:** `saccade.ollama("llama3.1")`, which keeps everything offline
-- **Any OpenAI-compatible server:** `saccade.OpenAICompatible(base_url=..., model=...)`
+2. Put your video at `examples/video.mp4`, or change the path in the script to your video.
+   Video files are git-ignored, so they won't be committed.
 
-## quickstart.py: no LLM, 100% local
+3. Set your Azure AI Foundry connection. The values come from the Foundry portal, under your
+   deployment:
 
-Shows search over what was said, the frames of what was shown, and prompt-ready context
-you can paste into any LLM.
+   ```bash
+   export AZURE_AI_ENDPOINT="https://<your-resource>.services.ai.azure.com/openai/v1/responses"
+   export AZURE_AI_API_KEY="<your-key>"
+   export AZURE_AI_DEPLOYMENT="<your-deployment-name>"   # e.g. gpt-4o or gpt-5-mini
+   ```
+
+   In PowerShell, set the same variables like this instead:
+
+   ```powershell
+   $env:AZURE_AI_ENDPOINT = "..."
+   ```
+
+4. Run one of the examples from the repository root:
+
+   ```bash
+   python examples/simple_cpu.py
+   python examples/simple_gpu.py
+   ```
+
+The first run processes the video on your machine: it transcribes the audio and picks
+representative frames, printing progress as it goes. The result is cached, so later runs,
+and any other question you ask, go straight to the LLM.
+
+The CPU and GPU versions keep separate caches, so the first GPU run processes the video once
+more.
+
+Only the transcript text and up to 12 frames are sent to your Azure deployment, never the
+video file. Keep your key in environment variables and out of the code, so it never gets
+committed.

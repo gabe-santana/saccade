@@ -48,7 +48,9 @@ def _pick_video(container: Any) -> Any:
     return None
 
 
-def sample_frames(path: str | Path, *, sample_fps: float) -> Iterator[SampledFrame]:
+def sample_frames(
+    path: str | Path, *, sample_fps: float, keyframes_only: bool = False
+) -> Iterator[SampledFrame]:
     """Yield about ``sample_fps`` decoded frames per second, each with tiny gray thumbnails."""
     path = Path(path)
     interval = 1.0 / sample_fps
@@ -58,7 +60,9 @@ def sample_frames(path: str | Path, *, sample_fps: float) -> Iterator[SampledFra
         if stream is None:
             return
         stream.thread_type = "AUTO"
-        if sample_fps <= 5:
+        if keyframes_only:
+            stream.codec_context.skip_frame = "NONKEY"
+        elif sample_fps <= 5:
             with contextlib.suppress(AttributeError, ValueError):  # older PyAV
                 stream.codec_context.skip_frame = "NONREF"
         origin = (container.start_time or 0) / av.time_base
@@ -142,3 +146,74 @@ class JpegWriter:
         )
         packets += list(context.encode(None))
         return b"".join(bytes(p) for p in packets), width, height
+
+
+@dataclass(frozen=True, slots=True)
+class GrabbedFrame:
+    """A frame decoded on demand at a requested time (optionally cropped), as JPEG."""
+
+    time: float
+    jpeg: bytes
+    width: int
+    height: int
+
+
+Box = tuple[float, float, float, float]
+"""``(x, y, width, height)`` as fractions of the frame, origin top-left."""
+
+
+def grab_frame(
+    path: str | Path,
+    time: float,
+    *,
+    box: Box | None = None,
+    max_width: int = 1600,
+    quality: int = 3,
+) -> GrabbedFrame:
+    """Decode the frame shown at ``time`` seconds, crop ``box`` at full resolution, encode JPEG.
+
+    Seeks to the preceding keyframe and decodes forward, so it costs at most one GOP of
+    decoding (typically well under a second) regardless of where ``time`` is.
+    """
+    path = Path(path)
+    container = open_container(path, "decode a frame from")
+    with container:
+        stream = _pick_video(container)
+        if stream is None:
+            raise MediaDecodeError(f'"{path.name}" has no video stream to take frames from.')
+        stream.thread_type = "AUTO"
+        origin = (container.start_time or 0) / av.time_base
+        target = max(0.0, time)
+        with contextlib.suppress(av.error.FFmpegError):
+            container.seek(int((target + origin) * av.time_base), backward=True, any_frame=False)
+        chosen: Any = None
+        chosen_time = 0.0
+        try:
+            for frame in container.decode(stream):
+                if frame.time is None:
+                    continue
+                frame_time = frame.time - origin
+                if chosen is not None and frame_time > target + 1e-3:
+                    break  # the previous frame is the one on screen at ``target``
+                chosen, chosen_time = frame, frame_time
+                if frame_time >= target - 1e-3:
+                    break
+        except av.error.FFmpegError as exc:
+            if chosen is None:
+                raise MediaDecodeError.from_ffmpeg(path, "decode a frame from", exc) from exc
+        if chosen is None:
+            raise MediaDecodeError(f'No frame could be decoded from "{path.name}" at {time:.2f}s.')
+        image = chosen
+        if box is not None:
+            rgb = chosen.to_ndarray(format="rgb24")
+            height, width = rgb.shape[:2]
+            x, y, w, h = (min(max(v, 0.0), 1.0) for v in box)
+            left, top = int(x * width), int(y * height)
+            right = max(left + 32, min(width, int((x + w) * width)))
+            bottom = max(top + 32, min(height, int((y + h) * height)))
+            crop = np.ascontiguousarray(rgb[top:bottom, left:right])
+            image = av.VideoFrame.from_ndarray(crop, format="rgb24")
+        data, out_width, out_height = JpegWriter(max_width=max_width, quality=quality).encode(image)
+        return GrabbedFrame(
+            time=round(max(0.0, chosen_time), 3), jpeg=data, width=out_width, height=out_height
+        )

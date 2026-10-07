@@ -106,6 +106,12 @@ def _add_video_options(parser: argparse.ArgumentParser) -> None:
     )
     group.add_argument("--offline", action="store_true", help="never download models")
     group.add_argument(
+        "--device", choices=["cpu", "cuda", "auto"], help="run Whisper on CPU or NVIDIA GPU"
+    )
+    group.add_argument(
+        "--keyframes-only", action="store_true", help="faster, coarser frame extraction"
+    )
+    group.add_argument(
         "--visual",
         choices=["auto", "screen", "scenes", "interval", "off"],
         default="auto",
@@ -215,7 +221,8 @@ def _video(args: argparse.Namespace, path: Path) -> Video:
         workers=args.workers,
         cache_dir=args.cache_dir,
         offline=True if args.offline else None,
-        visual=VisualConfig(strategy=args.visual),
+        visual=VisualConfig(strategy=args.visual, keyframes_only=args.keyframes_only),
+        device=args.device,
     )
 
 

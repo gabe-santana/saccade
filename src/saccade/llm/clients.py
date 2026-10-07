@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from saccade.exceptions import ConfigError
-from saccade.llm.base import LLMResponse, Message, chat_with_fallback
+from saccade.llm.base import LLMResponse, Message, chat_with_fallback, tool_body
 
 _AZURE_API_VERSION = "2024-10-21"
 _AZURE_INFERENCE_API_VERSION = "2024-05-01-preview"
@@ -26,6 +26,10 @@ class OpenAICompatible:
     model: str
     api_key: str | None = None
     images: bool = True
+    function_calling: bool = True
+    reasoning_effort: str | None = None
+    """``"minimal"``, ``"low"``, ``"medium"`` or ``"high"`` for reasoning models (GPT-5, o-series):
+    lower means fewer hidden thinking tokens. Leave ``None`` for non-reasoning models."""
     headers: dict[str, str] = field(default_factory=dict)
     timeout: float = 300.0
 
@@ -33,11 +37,28 @@ class OpenAICompatible:
     def supports_images(self) -> bool:
         return self.images
 
-    def complete(self, messages: list[Message], *, max_tokens: int = 8000) -> LLMResponse:
+    @property
+    def supports_tools(self) -> bool:
+        return self.function_calling
+
+    def complete(
+        self,
+        messages: list[Message],
+        *,
+        max_tokens: int = 8000,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+    ) -> LLMResponse:
         headers = dict(self.headers)
         if self.api_key:
             headers.setdefault("Authorization", f"Bearer {self.api_key}")
-        body: dict[str, Any] = {"model": self.model, "messages": messages}
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            **tool_body(tools, tool_choice),
+        }
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         url = f"{self.base_url.rstrip('/')}/chat/completions"
         return chat_with_fallback(url, headers, body, max_tokens=max_tokens, timeout=self.timeout)
 
@@ -61,6 +82,10 @@ class AzureFoundry:
     api_key: str
     deployment: str
     images: bool = True
+    function_calling: bool = True
+    reasoning_effort: str | None = None
+    """``"minimal"``, ``"low"``, ``"medium"`` or ``"high"`` for reasoning models (GPT-5, o-series):
+    lower means fewer hidden thinking tokens. Leave ``None`` for non-reasoning models."""
     timeout: float = 300.0
 
     def __post_init__(self) -> None:
@@ -74,6 +99,10 @@ class AzureFoundry:
     @property
     def supports_images(self) -> bool:
         return self.images
+
+    @property
+    def supports_tools(self) -> bool:
+        return self.function_calling
 
     def _url(self) -> tuple[str, bool]:
         """Chat-completions URL, and whether the body must name the model."""
@@ -93,9 +122,18 @@ class AzureFoundry:
             False,
         )
 
-    def complete(self, messages: list[Message], *, max_tokens: int = 8000) -> LLMResponse:
+    def complete(
+        self,
+        messages: list[Message],
+        *,
+        max_tokens: int = 8000,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+    ) -> LLMResponse:
         url, needs_model = self._url()
-        body: dict[str, Any] = {"messages": messages}
+        body: dict[str, Any] = {"messages": messages, **tool_body(tools, tool_choice)}
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         if needs_model:
             body["model"] = self.deployment
         headers = {"api-key": self.api_key}
@@ -111,11 +149,14 @@ def azure(
     deployment: str | None = None,
     *,
     images: bool = True,
+    reasoning_effort: str | None = None,
 ) -> AzureFoundry:
     """Connect to an Azure AI Foundry deployment.
 
     Arguments default to the environment variables ``AZURE_AI_ENDPOINT``,
     ``AZURE_AI_API_KEY`` and ``AZURE_AI_DEPLOYMENT``.
+
+    ``reasoning_effort="low"`` reduces the hidden thinking tokens of reasoning models (GPT-5).
     """
     endpoint = endpoint or os.environ.get("AZURE_AI_ENDPOINT", "")
     api_key = api_key or os.environ.get("AZURE_AI_API_KEY", "")
@@ -125,7 +166,13 @@ def azure(
             "Azure AI Foundry needs an endpoint and key: saccade.azure(endpoint=..., api_key=..., "
             "deployment=...) or set AZURE_AI_ENDPOINT / AZURE_AI_API_KEY / AZURE_AI_DEPLOYMENT."
         )
-    return AzureFoundry(endpoint=endpoint, api_key=api_key, deployment=deployment, images=images)
+    return AzureFoundry(
+        endpoint=endpoint,
+        api_key=api_key,
+        deployment=deployment,
+        images=images,
+        reasoning_effort=reasoning_effort,
+    )
 
 
 def openai(
@@ -143,4 +190,4 @@ def ollama(
     model: str, *, base_url: str = "http://localhost:11434/v1", images: bool = False
 ) -> OpenAICompatible:
     """A local model served by Ollama — keeps the whole workflow on your machine."""
-    return OpenAICompatible(base_url=base_url, model=model, images=images)
+    return OpenAICompatible(base_url=base_url, model=model, images=images, function_calling=False)

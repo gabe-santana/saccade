@@ -22,16 +22,32 @@ def test_subtitle_and_clock_formats() -> None:
 
 
 def test_profiles_match_spec() -> None:
-    assert PROFILES["fast"] == {"model": "base", "compute_type": "int8", "beam_size": 1}
+    assert PROFILES["fast"] == {"model": "base", "compute_type": "auto", "beam_size": 1}
     assert PROFILES["balanced"]["model"] == "small"
-    assert PROFILES["accurate"] == {"model": "medium", "compute_type": "int8", "beam_size": 5}
+    assert PROFILES["accurate"] == {"model": "medium", "compute_type": "auto", "beam_size": 5}
     asr = ASRConfig(language="pt").with_profile("accurate")
     assert (asr.model, asr.beam_size, asr.language) == ("medium", 5, "pt")
 
 
 def test_defaults_are_multilingual_cpu_int8() -> None:
     asr = ASRConfig()
-    assert (asr.model, asr.compute_type, asr.device, asr.beam_size) == ("small", "int8", "cpu", 1)
+    assert (asr.model, asr.compute_type, asr.device, asr.beam_size) == ("small", "auto", "cpu", 1)
+    from pathlib import Path
+
+    from saccade.asr.faster_whisper import FasterWhisperBackend, resolve_compute_type
+
+    assert resolve_compute_type("auto", "cpu") == "int8"
+    assert resolve_compute_type("auto", "cuda") == "float16"
+    # CPU cache keys are unchanged by the "auto" default, so existing indexes stay valid.
+    backend = FasterWhisperBackend(asr, models_dir=Path("."), threads=1)
+    assert backend.identity == {
+        "backend": "faster-whisper",
+        "model": "small",
+        "compute_type": "int8",
+        "device": "cpu",
+        "beam_size": 1,
+    }
+    assert backend.batch_size == 1
     assert not asr.model.endswith(".en")
     assert asr.language is None
     assert asr.word_timestamps is False

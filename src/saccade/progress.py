@@ -25,6 +25,7 @@ class Stage(StrEnum):
     TRANSCRIBE = "transcribe"
     INDEX = "index"
     FRAMES = "frames"
+    EXPLORE = "explore"
     COMPLETE = "complete"
     WARNING = "warning"
 

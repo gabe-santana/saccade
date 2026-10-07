@@ -3,8 +3,8 @@
 Fast, local video context for LLMs.
 
 Saccade turns hours of video into multilingual transcripts, representative frames,
-timestamped evidence and searchable, RAG-ready context — entirely on your CPU. No GPU,
-no Docker, no database server.
+timestamped evidence and searchable, RAG-ready context — locally on your CPU, or in seconds
+on an NVIDIA GPU. No GPU required, no Docker, no database server.
 
 ```python
 import saccade
@@ -53,6 +53,9 @@ source timestamps and segment or frame ids it came from. Saccade retrieves evide
 never writes conclusions of its own. The only generated text is your LLM's answer from
 `ask()`, which comes back together with the exact evidence it was given.
 
+**Documentation:** see [docs/](https://github.com/gabe-santana/saccade/blob/main/docs/README.md) for getting started, guides, the full API
+reference, extension points and troubleshooting.
+
 ---
 
 ## Contents
@@ -67,6 +70,7 @@ never writes conclusions of its own. The only generated text is your LLM's answe
 - [RAG context](#rag-context)
 - [Multilingual support](#multilingual-support)
 - [CPU tuning](#cpu-tuning)
+- [GPU](#gpu)
 - [Caching and incremental indexing](#caching-and-incremental-indexing)
 - [Command line](#command-line)
 - [Architecture](#architecture)
@@ -77,7 +81,7 @@ never writes conclusions of its own. The only generated text is your LLM's answe
 ## Installation
 
 ```bash
-pip install saccade
+pip install saccade-video        # the package is imported as `saccade`
 ```
 
 Python 3.11+. Saccade has four runtime dependencies:
@@ -145,23 +149,72 @@ Supported LLM connections:
 | OpenAI | `saccade.openai("gpt-4o")` (uses `OPENAI_API_KEY`) |
 | Local Ollama (fully offline) | `saccade.ollama("llama3.1")` |
 | Any OpenAI-compatible server | `saccade.OpenAICompatible(base_url, model, api_key)` |
-| Your own client | any object with `complete(messages, max_tokens=...)` and `supports_images` |
+| Your own client | any object with `complete(messages, max_tokens=...)` and `supports_images` (add `supports_tools` to enable exploration) |
 
 For Azure, `endpoint` can be any URL the Foundry portal shows. That includes the resource
 URL, `.../openai/v1`, `.../openai/v1/responses`, `.../models`, and the full target URI.
 Reasoning models such as GPT-5 and o-series are supported: requests use
 `max_completion_tokens`, and no `temperature` is sent.
 
-What the LLM receives:
+### The model explores the video
 
-1. **Transcript.** The full timestamped transcript when it fits `evidence_tokens` (default
-   48k). Questions like "How was the interview?" need the whole conversation. Longer videos
-   get only the passages retrieved for the question.
-2. **Frames.** Up to `max_images` frames (default 12), sent at low detail as JPEG data URLs,
-   each labelled with its timestamp. Frames near the retrieved passages come first; the rest
-   are spread evenly over the video.
-3. **Instructions.** A system prompt telling the model to use only that evidence, cite
-   timestamps, and say when the evidence is insufficient.
+Thumbnails are too small for questions like "describe everyone's appearance". So when the
+LLM supports tool calling (Azure and OpenAI do), `ask()` lets the model **navigate the
+video**. It starts from an overview and then asks for what it needs to see:
+
+| Tool | What the model gets back |
+|---|---|
+| `view_frames(timestamps)` | The exact frames at those moments, in high resolution |
+| `zoom(timestamp, x, y, width, height)` | One region of a frame (a participant's tile, small text on a slide) at the video's native resolution |
+| `search_transcript(query)` | When something was said |
+| `read_transcript(start, end)` | The verbatim transcript of a time range |
+
+The overview is the timestamped transcript plus small thumbnails of the representative
+frames. Frames are decoded on demand from the source file, about 0.1–0.25 s each for a
+3440×1440 recording, so the model can look at *any* moment, not only the stored frames.
+
+The model typically finds *when* things happen in the transcript, looks at those moments,
+zooms in where details matter, then answers. Exploration is bounded by `max_steps` (4 rounds)
+and `max_views` (16 images). Every image the model saw is saved next to the index and returned
+as evidence with its exact timestamp:
+
+```python
+answer = video.ask("Describe everyone's appearance in the meeting", progress=print)
+answer.steps     # ["Searching the transcript for 'introduce'", "Looking at 1:30.0, 6:15.0", "Zooming into 6:15.0", ...]
+answer.frames    # overview thumbnails + every frame and zoom the model looked at
+```
+
+`explore=False` turns this off and sends one fixed set of evidence instead. That is cheaper,
+and it is what LLMs without tool support get automatically. This fixed evidence is:
+
+- **Transcript.** The full timestamped transcript when it fits `evidence_tokens` (default
+  48k). Longer videos get only the passages retrieved for the question.
+- **Frames.** Up to `max_images` frames (default 12) at `image_detail="low"`, spread over the
+  video and near the retrieved passages.
+- **Instructions.** Use only that evidence, cite timestamps, and say when the evidence is
+  insufficient.
+
+### Token costs
+
+Chat APIs are stateless, so every exploration round resends the conversation so far: the
+transcript (about 5k tokens for a 26-minute meeting), the thumbnails and every image fetched
+so far. Saccade keeps this small:
+
+- **Small images.** Full frames are sent at 1024 px (about 425 tokens) and zooms at 768 px
+  (about 425 tokens). The model zooms only where it needs detail.
+- **Prompt caching.** Each round only appends to the conversation, so providers that cache
+  prompt prefixes bill the repeated part at a large discount. Azure OpenAI does this
+  automatically; for GPT-5 models cached input costs about 90% less. `answer.cached_tokens`
+  shows how much was cached.
+- **Your controls:**
+  - `saccade.azure(reasoning_effort="low")` reduces the hidden thinking tokens of reasoning
+    models. They are reported in `answer.reasoning_tokens`.
+  - `max_steps` and `max_views` cap how much the model explores.
+  - `explore=False` makes a single call.
+
+```python
+print(answer.input_tokens, answer.cached_tokens, answer.output_tokens, answer.reasoning_tokens)
+```
 
 Saccade contacts an LLM only when you configure one and call `ask()`. `video.aask()` is the
 async version. From the CLI:
@@ -381,6 +434,45 @@ Concurrency layout: one background thread decodes audio and runs VAD (single-thr
 onnxruntime) into a bounded queue of at most 3 packs. The caller's thread runs one Whisper
 model. Memory stays bounded however long the video is. There is no multiprocessing, and
 never one Whisper per core.
+
+## GPU
+
+```bash
+pip install "saccade-video[gpu]"      # NVIDIA's CUDA 12 libraries as pip wheels; no CUDA toolkit needed
+```
+
+```python
+video = saccade.Video(
+    "interview.mp4",
+    device="cuda",                                     # or "auto": GPU when available, else CPU
+    visual=saccade.VisualConfig(keyframes_only=True),  # frame extraction that keeps up with the GPU
+)
+```
+
+What changes on the GPU:
+
+- **Batched transcription.** Whisper runs in float16 and transcribes 16 speech chunks per
+  batch (`ASRConfig(batch_size=...)`).
+- **Overlapped work.** Frames are extracted while transcription runs, since the CPU is mostly
+  idle.
+
+Your existing CPU indexes stay valid. GPU results are cached separately, because batched
+decoding segments text slightly differently.
+
+Measured on a 26-minute 3440×1440 interview recording, from a cold index cache with the model
+already downloaded (i7-14650HX, RTX 5050 Laptop GPU):
+
+| Setup | Full indexing | Speech recognition |
+|---|---|---|
+| CPU (`small`, int8) | 175 s | 122 s |
+| GPU (`small`, float16) | 41 s, limited by decoding every 3440×1440 frame | 7 s |
+| GPU + `keyframes_only=True` | **9 s** (first transcript lines after 2.3 s) | 7 s |
+
+On the GPU, the larger models become practical. For example,
+`Video(..., device="cuda", profile="accurate")` uses `medium` with beam search.
+
+The first GPU run on a brand-new GPU architecture can take a few extra seconds while CUDA
+compiles its kernels; the driver caches the result.
 
 ## Caching and incremental indexing
 

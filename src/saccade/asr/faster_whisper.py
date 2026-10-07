@@ -8,6 +8,7 @@ once from the Hugging Face Hub; pass ``allow_download=False`` (or set
 
 from __future__ import annotations
 
+import bisect
 import logging
 import threading
 import time
@@ -15,10 +16,14 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from saccade.asr.base import ASRSegment, ASRWord, AudioSource, LanguageDetection
 from saccade.config import ASRConfig
 from saccade.exceptions import ModelNotFoundError, TranscriptionError
+from saccade.media.audio import SAMPLE_RATE
 from saccade.progress import Reporter, Stage
+from saccade.utils.gpu import missing_library_hint, resolve_device
 from saccade.utils.logs import get_logger, log_event
 
 logger = get_logger(__name__)
@@ -83,18 +88,27 @@ class FasterWhisperBackend:
         self.workers = workers
         self.allow_download = allow_download
         self.reporter = reporter
+        self.device = resolve_device(config.device)
+        self.compute_type = resolve_compute_type(config.compute_type, self.device)
+        # Batching only pays off on GPU; on CPU one chunk at a time with internal
+        # threading is faster and keeps time-to-first-result low.
+        self.batch_size = config.batch_size if self.device == "cuda" else 1
         self._model: Any = None
+        self._batched: Any = None
         self._lock = threading.Lock()
 
     @property
     def identity(self) -> dict[str, Any]:
-        return {
+        identity: dict[str, Any] = {
             "backend": "faster-whisper",
             "model": self.config.model,
-            "compute_type": self.config.compute_type,
-            "device": self.config.device,
+            "compute_type": self.compute_type,
+            "device": self.device,
             "beam_size": self.config.beam_size,
         }
+        if self.batch_size > 1:
+            identity["batched"] = True  # batched decoding segments text slightly differently
+        return identity
 
     @property
     def model(self) -> Any:
@@ -115,25 +129,29 @@ class FasterWhisperBackend:
         if self.reporter is not None:
             self.reporter(
                 Stage.LOAD_MODEL,
-                f"Loading Whisper model '{self.config.model}' ({self.config.compute_type})",
+                f"Loading Whisper model '{self.config.model}' ({self.compute_type} on {self.device})",
             )
         began = time.perf_counter()
         try:
             model = WhisperModel(
                 path,
-                device=self.config.device,
-                compute_type=self.config.compute_type,
+                device=self.device,
+                compute_type=self.compute_type,
                 cpu_threads=self.threads,
                 num_workers=self.workers,
             )
         except Exception as exc:
-            raise ModelNotFoundError(f"Could not load Whisper model from {path}: {exc}") from exc
+            hint = missing_library_hint(exc) if self.device == "cuda" else None
+            raise ModelNotFoundError(
+                hint or f"Could not load Whisper model from {path}: {exc}"
+            ) from exc
         log_event(
             logger,
             logging.INFO,
             "model.loaded",
             model=self.config.model,
-            compute_type=self.config.compute_type,
+            compute_type=self.compute_type,
+            device=self.device,
             threads=self.threads,
             seconds=time.perf_counter() - began,
         )
@@ -186,4 +204,80 @@ class FasterWhisperBackend:
                     words=words,
                 )
         except Exception as exc:
-            raise TranscriptionError(f"Whisper transcription failed: {exc}") from exc
+            raise _asr_error(exc, self.device) from exc
+
+    def transcribe_batch(
+        self,
+        audios: list[AudioSource],
+        *,
+        language: str | None = None,
+        word_timestamps: bool = False,
+    ) -> list[list[ASRSegment]]:
+        """Transcribe several chunks (each at most 30 s) in one batched GPU pass.
+
+        Returns one list of segments per input chunk, with times relative to that chunk.
+        """
+        from faster_whisper import BatchedInferencePipeline
+
+        model = self.model
+        with self._lock:
+            if self._batched is None:
+                self._batched = BatchedInferencePipeline(model)
+            pipeline = self._batched
+        clips: list[dict[str, float]] = []
+        offsets: list[float] = []
+        position = 0
+        for audio in audios:
+            start = position / SAMPLE_RATE
+            position += len(audio)
+            clips.append({"start": start, "end": position / SAMPLE_RATE})
+            offsets.append(start)
+        results: list[list[ASRSegment]] = [[] for _ in audios]
+        try:
+            segments, _info = pipeline.transcribe(
+                np.concatenate(audios),
+                language=language,
+                beam_size=self.config.beam_size,
+                vad_filter=False,
+                clip_timestamps=clips,
+                batch_size=self.batch_size,
+                without_timestamps=False,
+                word_timestamps=word_timestamps,
+                log_progress=False,
+            )
+            for seg in segments:
+                index = max(0, bisect.bisect_right(offsets, float(seg.start) + 1e-3) - 1)
+                offset = offsets[index]
+                words = tuple(
+                    ASRWord(
+                        start=w.start - offset,
+                        end=w.end - offset,
+                        text=w.word,
+                        probability=w.probability,
+                    )
+                    for w in (seg.words or ())
+                )
+                results[index].append(
+                    ASRSegment(
+                        start=float(seg.start) - offset,
+                        end=float(seg.end) - offset,
+                        text=seg.text,
+                        avg_logprob=float(seg.avg_logprob),
+                        no_speech_prob=float(seg.no_speech_prob),
+                        words=words,
+                    )
+                )
+        except Exception as exc:
+            raise _asr_error(exc, self.device) from exc
+        return results
+
+
+def resolve_compute_type(compute_type: str, device: str) -> str:
+    if compute_type != "auto":
+        return compute_type
+    return "float16" if device == "cuda" else "int8"
+
+
+def _asr_error(exc: Exception, device: str) -> TranscriptionError:
+    hint = missing_library_hint(exc) if device == "cuda" else None
+    return TranscriptionError(hint or f"Whisper transcription failed: {exc}")

@@ -10,6 +10,7 @@ import shutil
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Generator, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -187,6 +188,8 @@ class Video:
         visual: How representative frames are chosen (``VisualConfig(strategy="off")`` disables).
         llm: The LLM :meth:`ask` sends questions to, e.g. ``saccade.azure(...)``. Saccade only
             contacts it when you call :meth:`ask`.
+        device: ``"cuda"`` runs Whisper on an NVIDIA GPU (``pip install "saccade-video[gpu]"``),
+            ``"auto"`` uses one when available, ``"cpu"`` is the default.
     """
 
     def __init__(
@@ -207,6 +210,7 @@ class Video:
         vad_factory: Callable[[], VoiceActivityDetector] | None = None,
         visual: VisualConfig | None = None,
         llm: LLM | None = None,
+        device: Literal["cpu", "cuda", "auto"] | None = None,
     ) -> None:
         self.path = Path(path).expanduser().absolute()
         asr = asr or ASRConfig()
@@ -214,6 +218,8 @@ class Video:
             asr = asr.with_profile(validate_profile(profile) or "balanced")
         if language is not None:
             asr = replace(asr, language=language)
+        if device is not None:
+            asr = replace(asr, device=device)
         if threads is not None and threads < 1:
             raise ConfigError("threads must be >= 1.")
         if workers < 1:
@@ -455,6 +461,8 @@ class Video:
             frames_cached = self._index_frames(force=force, progress=progress)
             return self._summary(began, cached=frames_cached)
         cached = self._is_cached() and not force
+        # With Whisper on the GPU the CPU is mostly idle, so frames are extracted meanwhile.
+        frames_job = self._frames_in_background(force, progress) if self._on_gpu() else None
         stream = self._transcribe(force=force, progress=progress)
         try:
             for _ in stream:
@@ -462,9 +470,20 @@ class Video:
                     break
         finally:
             stream.close()
-        if cancel is None or not cancel.is_set():
+        if frames_job is not None:
+            cached = frames_job.result() and cached
+        elif cancel is None or not cancel.is_set():
             cached = self._index_frames(force=force, progress=progress) and cached
         return self._summary(began, cached=cached)
+
+    def _on_gpu(self) -> bool:
+        return getattr(self._backend_for(), "device", "cpu") == "cuda"
+
+    def _frames_in_background(self, force: bool, progress: ProgressCallback | None) -> Future[bool]:
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="saccade-frames")
+        future = executor.submit(self._index_frames, force=force, progress=progress)
+        executor.shutdown(wait=False)
+        return future
 
     # -- frames -----------------------------------------------------------------------
 
@@ -692,8 +711,16 @@ class Video:
         image_detail: Literal["low", "high", "auto"] = "low",
         evidence_tokens: int = 48_000,
         max_answer_tokens: int = 8000,
+        explore: bool | None = None,
+        max_steps: int = 4,
+        max_views: int = 16,
     ) -> Answer:
         """Ask your LLM a question about the video, answered from what was said and shown.
+
+        With an LLM that supports tool calling (Azure, OpenAI), the model *explores* the
+        video: starting from the transcript and frame thumbnails, it requests exact
+        high-resolution frames and zooms into regions at any timestamp until it has enough
+        evidence (``explore=False`` sends one fixed set of evidence instead).
 
         Indexes the video first if needed (cached afterwards). The LLM receives the
         timestamped transcript (all of it when it fits ``evidence_tokens``, otherwise the
@@ -708,6 +735,10 @@ class Video:
             image_detail: ``"low"`` (cheap, default) or ``"high"`` when small on-screen text matters.
             evidence_tokens: Budget for transcript evidence.
             max_answer_tokens: Output budget, including any hidden reasoning of reasoning models.
+            explore: Let the model look around the video with tools. Defaults to on when the LLM
+                supports tools and images.
+            max_steps: Upper bound on exploration rounds (each round may request several images).
+            max_views: Upper bound on frames/zooms the model may look at while exploring.
 
         Returns:
             :class:`~saccade.models.answer.Answer` — ``str(answer)`` is the text; ``answer.evidence``
@@ -723,6 +754,23 @@ class Video:
                 "or call video.ask(question, llm=...)."
             )
         self._index(force=False, progress=progress, cancel=None)
+        use_tools = explore
+        if use_tools is None:
+            use_tools = bool(getattr(model, "supports_tools", False)) and model.supports_images
+        if use_tools:
+            from saccade.explore import explore as explore_video
+
+            return explore_video(
+                self,
+                question,
+                model,
+                reporter=Reporter(progress, self.media_info().duration),
+                evidence_tokens=evidence_tokens,
+                overview_images=max_images,
+                max_steps=max_steps,
+                max_images=max_views,
+                max_answer_tokens=max_answer_tokens,
+            )
         return ask_video(
             self,
             question,

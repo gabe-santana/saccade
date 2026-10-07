@@ -31,16 +31,33 @@ class LLMError(SaccadeError):
 
 
 @dataclass(frozen=True, slots=True)
+class ToolCall:
+    """A function call requested by the model."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class LLMResponse:
     text: str
     model: str | None = None
     usage: dict[str, Any] = field(default_factory=dict)
     finish_reason: str | None = None
+    tool_calls: tuple[ToolCall, ...] = ()
+    message: Message = field(default_factory=dict)
+    """The raw assistant message, to append to the conversation when continuing it."""
 
 
 @runtime_checkable
 class LLM(Protocol):
-    """Anything that can answer a list of chat messages."""
+    """Anything that can answer a list of chat messages.
+
+    ``supports_tools`` (optional, default False) enables :meth:`saccade.Video.ask`'s
+    exploration mode, where the model calls tools to look at the video; ``complete`` then
+    receives OpenAI-format ``tools`` and ``tool_choice`` keyword arguments.
+    """
 
     @property
     def supports_images(self) -> bool: ...
@@ -86,7 +103,8 @@ def post_chat(
             raise LLMError(f"Could not reach {shown}: {exc.reason}") from exc
     try:
         choice = payload["choices"][0]
-        text = choice["message"].get("content") or ""
+        message = dict(choice["message"])
+        text = message.get("content") or ""
     except (KeyError, IndexError, TypeError, AttributeError) as exc:
         raise LLMError(f"Unexpected response from {shown}: {str(payload)[:500]}") from exc
     return LLMResponse(
@@ -94,7 +112,32 @@ def post_chat(
         model=payload.get("model"),
         usage=payload.get("usage") or {},
         finish_reason=choice.get("finish_reason"),
+        tool_calls=_tool_calls(message),
+        message={k: v for k, v in message.items() if k in ("role", "content", "tool_calls")},
     )
+
+
+def _tool_calls(message: Message) -> tuple[ToolCall, ...]:
+    calls = []
+    for raw in message.get("tool_calls") or ():
+        function = raw.get("function") or {}
+        arguments = function.get("arguments") or "{}"
+        try:
+            parsed = json.loads(arguments) if isinstance(arguments, str) else dict(arguments)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = {}
+        calls.append(
+            ToolCall(
+                id=str(raw.get("id", "")), name=str(function.get("name", "")), arguments=parsed
+            )
+        )
+    return tuple(calls)
+
+
+def tool_body(tools: list[dict[str, Any]] | None, tool_choice: str | None) -> dict[str, Any]:
+    if not tools:
+        return {}
+    return {"tools": tools, "tool_choice": tool_choice or "auto"}
 
 
 def chat_with_fallback(
@@ -110,7 +153,7 @@ def chat_with_fallback(
         if exc.status != 400 or "max_completion_tokens" not in exc.body:
             raise
         response = post_chat(url, headers, {**body, "max_tokens": max_tokens}, timeout=timeout)
-    if not response.text.strip() and response.finish_reason == "length":
+    if not response.text.strip() and not response.tool_calls and response.finish_reason == "length":
         raise LLMError(
             f"The model used its whole output budget ({max_tokens} tokens) before answering — "
             "reasoning models spend tokens thinking first. Pass a larger max_answer_tokens."

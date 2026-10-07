@@ -352,7 +352,7 @@ def run_transcription(ctx: PipelineContext, run: RunRecord) -> Iterator[Transcri
             pack_seconds=ctx.pack_seconds,
             stream_index=ctx.stream_index,
         ),
-        maxsize=_QUEUE_PACKS,
+        maxsize=max(_QUEUE_PACKS, _batch_size(ctx) + 2),
         name="saccade-decode-vad",
     )
     workers = max(1, ctx.workers)
@@ -360,6 +360,8 @@ def run_transcription(ctx: PipelineContext, run: RunRecord) -> Iterator[Transcri
         ThreadPoolExecutor(workers, thread_name_prefix="saccade-asr") if workers > 1 else None
     )
     in_flight: deque[tuple[Pack, Future[tuple[list[ASRSegment], float]]]] = deque()
+    batch_size = _batch_size(ctx)
+    batch: list[Pack] = []
     conn = db.connect()
     try:
         for item in producer:
@@ -374,6 +376,12 @@ def run_transcription(ctx: PipelineContext, run: RunRecord) -> Iterator[Transcri
             pack = item
             if state.language is None:
                 _detect_language(ctx, state, pack)
+            if batch_size > 1:
+                batch.append(pack)
+                if len(batch) >= batch_size:
+                    yield from _run_batch(ctx, conn, state, batch)
+                    batch = []
+                continue
             ctx.reporter(
                 Stage.TRANSCRIBE,
                 span_message("Transcribing", pack.start, pack.end),
@@ -394,6 +402,8 @@ def run_transcription(ctx: PipelineContext, run: RunRecord) -> Iterator[Transcri
         while in_flight:
             done_pack, future = in_flight.popleft()
             yield from _commit(ctx, conn, state, done_pack, *future.result())
+        if batch:
+            yield from _run_batch(ctx, conn, state, batch)
 
         final_chunks = state.chunker.flush()
         if final_chunks:
@@ -418,6 +428,32 @@ def run_transcription(ctx: PipelineContext, run: RunRecord) -> Iterator[Transcri
         if executor is not None:
             executor.shutdown(wait=True, cancel_futures=True)
         conn.close()
+
+
+def _batch_size(ctx: PipelineContext) -> int:
+    """Packs per ASR call: >1 only for backends that batch (faster-whisper on GPU)."""
+    if not hasattr(ctx.backend, "transcribe_batch"):
+        return 1
+    return max(1, int(getattr(ctx.backend, "batch_size", 1) or 1))
+
+
+def _run_batch(
+    ctx: PipelineContext, conn: sqlite3.Connection, state: _State, packs: list[Pack]
+) -> Iterator[TranscriptSegment]:
+    ctx.reporter(
+        Stage.TRANSCRIBE,
+        span_message("Transcribing", packs[0].start, packs[-1].end),
+        position=packs[-1].end,
+        start=packs[0].start,
+        end=packs[-1].end,
+    )
+    began = time.perf_counter()
+    results = ctx.backend.transcribe_batch(  # type: ignore[attr-defined]
+        [p.audio for p in packs], language=state.language, word_timestamps=ctx.asr.word_timestamps
+    )
+    elapsed = (time.perf_counter() - began) / len(packs)
+    for pack, raw in zip(packs, results, strict=True):
+        yield from _commit(ctx, conn, state, pack, raw, elapsed)
 
 
 def _detect_language(ctx: PipelineContext, state: _State, pack: Pack) -> None:

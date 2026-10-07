@@ -3,18 +3,17 @@ requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [project]
-name = "saccade"
-version = "0.1.0"
-description = "Fast, local video context for LLMs: multilingual transcripts, timestamped evidence and RAG-ready search, entirely on your CPU."
+name = "saccade-video"  # the import name is still `saccade` ("saccade" is taken on PyPI)
+dynamic = ["version"]
+description = "Fast, local video context for LLMs: transcripts, representative frames, timestamped search and ask() over any video, on CPU or GPU."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "Gabriel Santana" }]
 keywords = ["video", "transcription", "whisper", "rag", "search", "asr", "vad", "offline"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -35,19 +34,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# CUDA 12 runtime libraries for Whisper on NVIDIA GPUs (no CUDA toolkit install needed).
+gpu = ["nvidia-cublas-cu12>=12.4", "nvidia-cudnn-cu12>=9,<10"]
 dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10", "psutil>=5.9"]
 
 [project.scripts]
 saccade = "saccade.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/bds-datasolution/saccade"
+Homepage = "https://github.com/gabe-santana/saccade"
+Documentation = "https://github.com/gabe-santana/saccade/tree/main/docs"
+Issues = "https://github.com/gabe-santana/saccade/issues"
+
+[tool.hatch.version]
+path = "src/saccade/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/saccade"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/saccade", "tests", "benchmarks", "README.md", "pyproject.toml"]
+include = ["src/saccade", "tests", "docs", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -85,5 +91,5 @@ warn_unreachable = true
 files = ["src/saccade"]
 
 [[tool.mypy.overrides]]
-module = ["av", "av.*", "faster_whisper", "faster_whisper.*", "onnxruntime", "psutil"]
+module = ["av", "av.*", "faster_whisper", "faster_whisper.*", "onnxruntime", "psutil", "ctranslate2"]
 ignore_missing_imports = true
