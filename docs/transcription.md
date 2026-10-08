@@ -162,7 +162,16 @@ Whisper tends to invent text during silence.
 t = video.transcript()
 Path("talk.srt").write_text(t.to_srt(), encoding="utf-8")
 Path("talk.vtt").write_text(t.to_vtt(), encoding="utf-8")
+Path("talk.md").write_text(t.to_markdown(title="talk.mp4"), encoding="utf-8")
 Path("talk.json").write_text(t.to_json(), encoding="utf-8")
 ```
 
-Or from the CLI: `saccade transcribe talk.mp4 -f srt -o talk.srt`.
+Markdown output uses a heading followed by one timestamped paragraph per segment:
+
+```markdown
+# talk.mp4
+
+**[0:12.0]** We are switching authentication to managed identity...
+```
+
+Or from the CLI: `saccade transcribe talk.mp4 -f md -o talk.md`.
