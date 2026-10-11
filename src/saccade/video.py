@@ -30,6 +30,7 @@ from saccade.config import (
 )
 from saccade.exceptions import AudioStreamNotFoundError, ConfigError, NotIndexedError
 from saccade.index.database import Database, RunRecord, utcnow
+from saccade.index.fts import build_match
 from saccade.llm.base import LLM
 from saccade.media.fingerprint import fingerprint as compute_fingerprint
 from saccade.media.probe import MediaInfo, probe
@@ -55,10 +56,11 @@ from saccade.utils.concurrency import default_threads, iterate_in_thread
 from saccade.vad import create_vad
 from saccade.vad.base import VoiceActivityDetector
 from saccade.vision.extract import extract_frames, frame_id
+from saccade.vision.ocr import ocr_identity
 
 _TRANSCRIPT = "transcript"
 _FRAMES = "frames"
-_VISUAL_VERSION = 1
+_VISUAL_VERSION = 2
 _OFFLINE_ENV = ("SACCADE_OFFLINE", "HF_HUB_OFFLINE")
 
 
@@ -488,7 +490,11 @@ class Video:
     # -- frames -----------------------------------------------------------------------
 
     def _visual_key(self) -> tuple[str, dict[str, Any]]:
-        material = {"visual_version": _VISUAL_VERSION, "visual": asdict(self.visual_config)}
+        material = {
+            "visual_version": _VISUAL_VERSION,
+            "visual": asdict(self.visual_config),
+            "ocr": ocr_identity(self.visual_config),
+        }
         blob = json.dumps(material, sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()[:24], material
 
@@ -540,7 +546,7 @@ class Video:
         if self.visual_config.strategy == "off":
             return None
         key, _ = self._visual_key()
-        run = self._db().best_run(_FRAMES, key)
+        run = self._db().get_run(_FRAMES, key)
         return run if run is not None and run.status == "complete" else None
 
     def frames(self, *, start: float | None = None, end: float | None = None) -> list[Frame]:
@@ -565,6 +571,7 @@ class Video:
                 width=row.width,
                 height=row.height,
                 reason=row.reason,
+                ocr_text=row.ocr_text,
             )
             for row in self._db().frames(run.id, start=start, end=end)
         ]
@@ -647,7 +654,7 @@ class Video:
         end: float | None = None,
         expand: float = 0.0,
     ) -> list[SearchResult]:
-        """Find the passages that best match ``query`` (BM25 over the transcript).
+        """Find transcript passages and on-screen text matching ``query`` with FTS5.
 
         Works on partial indexes, so it can be used while :meth:`index` is still running.
 
@@ -659,9 +666,45 @@ class Video:
             expand: Seconds of surrounding transcript to add to each result.
         """
         run = self._require_run()
-        return search_transcript(
+        speech = search_transcript(
             self._db(), run.id, query, limit=limit, start=start, end=end, expand=expand
         )
+        visual = self._search_frame_text(query, limit=limit, start=start, end=end)
+        if not visual:
+            return speech
+        if not speech:
+            return visual
+        ranked = [
+            replace(result, score=round(61 / (61 + rank), 4))
+            for results in (speech, visual)
+            for rank, result in enumerate(results)
+        ]
+        return sorted(ranked, key=lambda result: (-result.score, result.start))[:limit]
+
+    def _search_frame_text(
+        self,
+        query: str,
+        *,
+        limit: int = 24,
+        start: float | None = None,
+        end: float | None = None,
+    ) -> list[SearchResult]:
+        run = self._frames_run()
+        match = build_match(query)
+        if run is None or match is None:
+            return []
+        rows = self._db().search_frames(run.id, match.expression, start=start, end=end, limit=limit)
+        return [
+            SearchResult(
+                start=row.timestamp,
+                end=row.timestamp,
+                text=row.ocr_text,
+                score=round(61 / (61 + rank), 4),
+                source="frame",
+                frame_ids=(frame_id(row.idx),),
+            )
+            for rank, row in enumerate(rows)
+        ]
 
     def context(
         self,
@@ -699,6 +742,7 @@ class Video:
             ),
             token_counter=token_counter,
             frames=lambda a, b: self.frames(start=a, end=b),
+            frame_hits=self._search_frame_text(query),
         )
 
     def ask(

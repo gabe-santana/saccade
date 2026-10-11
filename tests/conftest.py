@@ -14,6 +14,12 @@ from saccade.vad.silero import SileroVAD
 from support import EnergyModel, ToneASR, place, tone, write_media
 
 
+@pytest.fixture(autouse=True)
+def offline_ocr_default(monkeypatch, request) -> None:
+    if request.node.get_closest_marker("integration") is None:
+        monkeypatch.setattr("saccade.vision.ocr.installed_version", lambda: None)
+
+
 @pytest.fixture
 def cache_dir(tmp_path: Path) -> Path:
     return tmp_path / "cache"

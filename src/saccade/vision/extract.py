@@ -14,6 +14,7 @@ from saccade.progress import Reporter, Stage
 from saccade.utils.logs import get_logger, log_event
 from saccade.utils.time import format_clock
 from saccade.vision.hashing import dhash
+from saccade.vision.ocr import FrameOCR, ocr_identity
 from saccade.vision.sampling import Candidate, Decision, FrameSelector
 
 logger = get_logger(__name__)
@@ -46,6 +47,7 @@ def extract_frames(
     out_dir.mkdir(parents=True, exist_ok=True)
     selector = FrameSelector(config)
     writer = JpegWriter(max_width=config.max_width, quality=config.jpeg_quality)
+    reader = FrameOCR(config.ocr_score) if ocr_identity(config) is not None else None
     began = time.perf_counter()
     batch: list[NewFrame] = []
     sampled = 0
@@ -68,6 +70,7 @@ def extract_frames(
                 height=height,
                 dhash=f"{decision.candidate.hash:064x}",
                 reason=decision.reason,
+                ocr_text=reader(data) if reader is not None else "",
             )
         )
 

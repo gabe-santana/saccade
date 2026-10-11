@@ -8,7 +8,7 @@ results from different configurations.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 TABLES = """
 CREATE TABLE IF NOT EXISTS metadata (
@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS frames (
     height    INTEGER NOT NULL,
     dhash     TEXT NOT NULL,
     reason    TEXT NOT NULL,
+    ocr_text  TEXT NOT NULL DEFAULT '',
     UNIQUE (run_id, idx)
 );
 CREATE INDEX IF NOT EXISTS frames_time ON frames (run_id, timestamp);
@@ -111,4 +112,7 @@ CREATE INDEX IF NOT EXISTS frames_time ON frames (run_id, timestamp);
 # rowid of segment_fts == transcript_segments.id; ``body`` is the normalised text.
 FTS_TABLE = (
     'CREATE VIRTUAL TABLE IF NOT EXISTS segment_fts USING fts5(body, tokenize = "{tokenizer}")'
+)
+FRAME_FTS_TABLE = (
+    'CREATE VIRTUAL TABLE IF NOT EXISTS frame_fts USING fts5(body, tokenize = "{tokenizer}")'
 )

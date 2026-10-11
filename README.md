@@ -240,7 +240,7 @@ Next up:
 
 - 🧠 **Semantic search:** optional multilingual embeddings with hybrid lexical, semantic and temporal ranking
 - 🗣️ **Speaker diarization:** who said what
-- 🔤 **On-screen text:** OCR for slides and screen recordings, searchable like speech
+- 🔤 **On-screen text:** available with the optional [OCR extra](docs/frames.md#searchable-on-screen-text)
 - 🍎 **More backends:** whisper.cpp (Apple Silicon / Metal), more LLM providers
 - 🧹 **Cache management:** `saccade cache list / prune / clear`
 

@@ -21,6 +21,7 @@ class Frame:
         width: Stored image width in pixels.
         height: Stored image height in pixels.
         reason: Why it was kept: ``start``, ``change`` (visual change), ``interval`` or ``end``.
+        ocr_text: Recognized on-screen text, empty when OCR is disabled or finds no text.
     """
 
     id: str
@@ -29,6 +30,7 @@ class Frame:
     width: int = 0
     height: int = 0
     reason: str = "change"
+    ocr_text: str = ""
 
     def read_bytes(self) -> bytes:
         return Path(self.path).read_bytes()

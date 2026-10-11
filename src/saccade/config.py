@@ -128,7 +128,7 @@ class ChunkConfig:
 
 @dataclass(frozen=True, slots=True)
 class VisualConfig:
-    """How representative frames are chosen. Frames are never sent through a vision model.
+    """How representative frames are chosen, with optional local text recognition.
 
     Strategies:
         ``auto``: adapts per video — on static content (screen recordings, slides) every
@@ -146,6 +146,8 @@ class VisualConfig:
         max_frames: Hard cap per video.
         keyframes_only: Decode only keyframes (typically one every 2–10 s). About 5x faster
             frame extraction on long or high-resolution videos, at coarser time resolution.
+        ocr: Recognize text on kept frames; None enables it when the OCR extra is installed.
+        ocr_score: Minimum confidence for a recognized text line, between zero and one.
     """
 
     strategy: VisualStrategy = "auto"
@@ -155,6 +157,8 @@ class VisualConfig:
     jpeg_quality: int = 3  # FFmpeg qscale: 2 (best) .. 31 (worst)
     max_frames: int = 1000
     keyframes_only: bool = False
+    ocr: bool | None = None
+    ocr_score: float = 0.5
 
     def __post_init__(self) -> None:
         if self.strategy not in get_args(VisualStrategy):
@@ -170,6 +174,10 @@ class VisualConfig:
             )
         if not 2 <= self.jpeg_quality <= 31:
             raise ConfigError("VisualConfig.jpeg_quality must be between 2 and 31.")
+        if self.ocr is not None and not isinstance(self.ocr, bool):
+            raise ConfigError("VisualConfig.ocr must be True, False, or None.")
+        if not 0 <= self.ocr_score <= 1:
+            raise ConfigError("VisualConfig.ocr_score must be between 0 and 1.")
 
 
 def config_fingerprint(*parts: object) -> dict[str, Any]:

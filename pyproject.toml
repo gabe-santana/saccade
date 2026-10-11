@@ -36,7 +36,8 @@ dependencies = [
 [project.optional-dependencies]
 # CUDA 12 runtime libraries for Whisper on NVIDIA GPUs (no CUDA toolkit install needed).
 gpu = ["nvidia-cublas-cu12>=12.4", "nvidia-cudnn-cu12>=9,<10"]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10", "psutil>=5.9"]
+ocr = ["rapidocr-onnxruntime>=1.4.4,<2"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10", "psutil>=5.9", "pillow>=10.1"]
 
 [project.scripts]
 saccade = "saccade.cli:main"
@@ -113,5 +114,5 @@ warn_unreachable = true
 files = ["src/saccade"]
 
 [[tool.mypy.overrides]]
-module = ["av", "av.*", "faster_whisper", "faster_whisper.*", "onnxruntime", "psutil", "ctranslate2"]
+module = ["av", "av.*", "faster_whisper", "faster_whisper.*", "onnxruntime", "psutil", "ctranslate2", "rapidocr_onnxruntime"]
 ignore_missing_imports = true

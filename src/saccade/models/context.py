@@ -64,7 +64,7 @@ class VideoContext:
 
     @property
     def found(self) -> bool:
-        return bool(self.segments)
+        return bool(self.segments or any(item.text for item in self.evidence))
 
     def to_dict(self) -> dict[str, Any]:
         return {

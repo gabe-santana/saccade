@@ -58,7 +58,7 @@ Creating a `Video` is cheap and does no I/O; work happens when you call a method
 | `transcribe(*, profile=None, force=False, progress=None)` | `Iterator[TranscriptSegment]` | Stream segments, transcribing only what's missing |
 | `transcript()` | `Transcript` | The stored transcript; never transcribes |
 | `chunks()` | `list[TranscriptChunk]` | 20–60 s retrieval chunks |
-| `search(query, *, limit=5, start=None, end=None, expand=0.0)` | `list[SearchResult]` | Full-text search over the transcript |
+| `search(query, *, limit=5, start=None, end=None, expand=0.0)` | `list[SearchResult]` | Full-text search over speech and recognized on-screen text |
 | `context(query, *, max_tokens=4000, before=12.0, after=15.0, segment_timestamps=False, token_counter=None)` | `VideoContext` | Token-budgeted, timestamped evidence |
 | `frames(*, start=None, end=None)` | `list[Frame]` | Stored representative frames |
 | `ask(question, *, llm=None, progress=None, explore=None, max_steps=4, max_views=16, max_images=12, image_detail="low", evidence_tokens=48000, max_answer_tokens=8000)` | `Answer` | Answer a question with your LLM ([guide](asking-questions.md)) |
@@ -149,6 +149,8 @@ All profiles use `compute_type="auto"`.
 | `jpeg_quality` | 3 | FFmpeg qscale, 2 (best) .. 31 |
 | `max_frames` | 1000 | Cap per video |
 | `keyframes_only` | `False` | Decode keyframes only (about 5× faster, coarser) |
+| `ocr` | `None` | Auto-enable if the `ocr` extra is installed; `True` requires it, `False` disables it |
+| `ocr_score` | 0.5 | Minimum OCR line confidence, between 0 and 1 |
 
 ---
 
@@ -232,7 +234,11 @@ Fields: `id`, `start`, `end`, `text`, `segment_ids`.
 ### `SearchResult`
 
 Fields: `start`, `end`, `text`, `score` (relative, in (0, 1]), `source`, `segment_ids`,
-`matched_terms`. Property `id` gives `seg_a–seg_b`.
+`matched_terms`, `frame_ids`. Property `id` gives `seg_a–seg_b` for transcript passages or
+the source frame ID for OCR hits. `source` is `"transcript"` or `"frame"`; a frame hit has
+equal `start` and `end` timestamps and no `segment_ids`. `expand` only widens speech hits.
+When both sources match, results are blended by within-source rank, not raw BM25 scores;
+the overall `limit` and timestamp filters apply to both.
 
 ### `VideoContext`
 
@@ -246,9 +252,14 @@ Fields: `start`, `end`, `text`, `score` (relative, in (0, 1]), `source`, `segmen
 
 Members: `found`, `to_json()`.
 
+`found` is also true for OCR-only evidence, including silent recordings. OCR blocks are
+labelled `Text on screen at ...` and share the token budget with transcript passages.
+
 ### `Evidence`
 
 Fields: `id`, `type` (`"transcript"` or `"frame"`), `start`, `end`, `timestamp`, `text`.
+For OCR, `type="frame"`, `timestamp` is the decoded frame time, and `text` contains the
+recognized text. Image-only frame evidence has no `text`.
 
 ### `ContextMetadata`
 
@@ -257,7 +268,8 @@ Fields: `video`, `duration`, `language`, `transcript_status`, `indexed_until`, `
 
 ### `Frame`
 
-Fields: `id`, `timestamp`, `path`, `width`, `height`, `reason`. Methods: `read_bytes()`,
+Fields: `id`, `timestamp`, `path`, `width`, `height`, `reason`, `ocr_text` (empty when disabled
+or nothing was recognized). Methods: `read_bytes()`,
 `data_url()`, `to_dict()`.
 
 ### `Answer`

@@ -22,10 +22,11 @@ Each `Frame` has these fields:
 | `path` | Absolute path of the JPEG |
 | `width`, `height` | Stored image size |
 | `reason` | Why it was kept: `start`, `change`, `interval` or `end` |
+| `ocr_text` | Recognized on-screen text, or an empty string |
 
 ## How frames are chosen
 
-No vision model is involved, so frame selection is cheap.
+No vision model is involved in frame selection. Optional OCR runs only after selection.
 
 1. **Sample.** About one decoded frame per second is reduced to a 64×36 grayscale thumbnail.
    Non-reference frames are skipped at decode time.
@@ -36,6 +37,47 @@ No vision model is involved, so frame selection is cheap.
    with recently kept frames. Returning to an earlier slide does not store it again.
 4. **Store.** Kept frames are saved as JPEGs, at most 1280 px wide by default, next to the
    index.
+
+## Searchable on-screen text
+
+Install the optional CPU-only OCR engine:
+
+```bash
+pip install "saccade-video[ocr]"
+```
+
+`index()` then recognizes text in each kept JPEG using RapidOCR's bundled ONNX models.
+It does not OCR every decoded frame, call a cloud service, or download weights during
+indexing. The engine is loaded lazily and processes one stored JPEG at a time.
+
+```python
+from saccade import Video, VisualConfig
+
+video = Video("slides.mp4", visual=VisualConfig(ocr=True, ocr_score=0.5))
+video.index()
+for hit in video.search("pricing table"):
+   print(hit.source, hit.start, hit.text)
+```
+
+`ocr=None` (default) automatically uses the installed extra; `ocr=True` gives an actionable
+error if it is missing; `ocr=False` disables recognition even when installed. The `off`
+frame strategy disables OCR too. OCR uses CPU regardless of the ASR device.
+
+Frame hits use `source="frame"`, `frame_ids`, and a single source timestamp (`start == end`).
+Search applies the same text normalization and time filters as speech. `context()` includes
+token-budgeted `Text on screen at ...` blocks, even for silent recordings. `ask()` includes
+recognized text in its overview or retrieved evidence, including for text-only LLMs.
+
+The bundled Chinese/English recognition model is not a universal multilingual OCR model.
+Tiny fonts, blur, tables, source code, and other scripts may be misread; confidence is not
+an accuracy guarantee. OCR does not preserve layout or explain diagrams. Text visible only
+between sampled/kept frames may be missed. Verify important details against the image.
+
+OCR settings and engine package version are part of the visual cache key. Installing or
+upgrading the extra, changing `ocr_score`, or disabling OCR requires `index()` again;
+`frames()` does not substitute frames from a different configuration. The visual cache
+version is bumped for this feature, so existing frames are rebuilt once. Schema migration
+preserves existing transcripts and frame rows; old rows have empty `ocr_text`.
 
 ## Strategies
 

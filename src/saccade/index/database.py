@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 from saccade.exceptions import DatabaseError
 from saccade.index.fts import TOKENIZER, TOKENIZER_FALLBACK, normalize_text
-from saccade.index.schema import FTS_TABLE, SCHEMA_VERSION, TABLES
+from saccade.index.schema import FRAME_FTS_TABLE, FTS_TABLE, SCHEMA_VERSION, TABLES
 from saccade.models.segment import TranscriptSegment, TranscriptWord, chunk_id, segment_id
 from saccade.models.transcript import TranscriptChunk
 from saccade.vad.base import SpeechRegion
@@ -71,6 +71,7 @@ class NewFrame:
     height: int
     dhash: str
     reason: str
+    ocr_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +157,14 @@ class Database:
                 # Statement by statement: executescript() would commit our transaction.
                 for statement in filter(str.strip, TABLES.split(";")):
                     conn.execute(statement)
+                columns = {column["name"] for column in conn.execute("PRAGMA table_info(frames)")}
+                if "ocr_text" not in columns:
+                    conn.execute("ALTER TABLE frames ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''")
                 self._create_fts(conn)
+                conn.execute(
+                    "CREATE TRIGGER IF NOT EXISTS frames_delete_fts AFTER DELETE ON frames "
+                    "BEGIN DELETE FROM frame_fts WHERE rowid = old.id; END"
+                )
                 conn.execute(
                     "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?)",
                     (str(SCHEMA_VERSION),),
@@ -164,16 +172,16 @@ class Database:
 
     @staticmethod
     def _create_fts(conn: sqlite3.Connection) -> None:
-        try:
-            conn.execute(FTS_TABLE.format(tokenizer=TOKENIZER))
-        except sqlite3.OperationalError as exc:
-            if "fts5" in str(exc).lower() and "no such module" in str(exc).lower():
-                raise DatabaseError(
-                    "This Python's SQLite library was built without FTS5, which Saccade needs for search. "
-                    "Use an official python.org / conda build of Python."
-                ) from exc
-            # Older SQLite without the ``categories`` option.
-            conn.execute(FTS_TABLE.format(tokenizer=TOKENIZER_FALLBACK))
+        for statement in (FTS_TABLE, FRAME_FTS_TABLE):
+            try:
+                conn.execute(statement.format(tokenizer=TOKENIZER))
+            except sqlite3.OperationalError as exc:
+                if "fts5" in str(exc).lower() and "no such module" in str(exc).lower():
+                    raise DatabaseError(
+                        "This Python's SQLite library was built without FTS5, which Saccade needs for search. "
+                        "Use an official python.org / conda build of Python."
+                    ) from exc
+                conn.execute(statement.format(tokenizer=TOKENIZER_FALLBACK))
 
     # -- videos ---------------------------------------------------------------------
 
@@ -493,16 +501,29 @@ class Database:
         if not frames:
             return
         with self.transaction(conn):
-            conn.executemany(
-                """
-                INSERT INTO frames (run_id, idx, timestamp, path, width, height, dhash, reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (run_id, f.idx, f.timestamp, f.path, f.width, f.height, f.dhash, f.reason)
-                    for f in frames
-                ],
-            )
+            for frame in frames:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO frames (run_id, idx, timestamp, path, width, height, dhash, reason, ocr_text)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        frame.idx,
+                        frame.timestamp,
+                        frame.path,
+                        frame.width,
+                        frame.height,
+                        frame.dhash,
+                        frame.reason,
+                        frame.ocr_text,
+                    ),
+                )
+                if frame.ocr_text:
+                    conn.execute(
+                        "INSERT INTO frame_fts (rowid, body) VALUES (?, ?)",
+                        (cursor.lastrowid, normalize_text(frame.ocr_text)),
+                    )
 
     def frames(
         self, run_id: int, *, start: float | None = None, end: float | None = None
@@ -517,18 +538,28 @@ class Database:
             params.append(end)
         with self.session() as conn:
             rows = conn.execute(sql + " ORDER BY timestamp", params).fetchall()
-        return [
-            NewFrame(
-                r["idx"],
-                r["timestamp"],
-                r["path"],
-                r["width"],
-                r["height"],
-                r["dhash"],
-                r["reason"],
-            )
-            for r in rows
-        ]
+        return [_frame(row) for row in rows]
+
+    def search_frames(
+        self, run_id: int, match: str, *, start: float | None, end: float | None, limit: int
+    ) -> list[NewFrame]:
+        sql = (
+            "SELECT f.* FROM frame_fts JOIN frames f ON f.id = frame_fts.rowid "
+            "WHERE frame_fts MATCH ? AND f.run_id = ?"
+        )
+        params: list[Any] = [match, run_id]
+        if start is not None:
+            sql += " AND f.timestamp >= ?"
+            params.append(start)
+        if end is not None:
+            sql += " AND f.timestamp <= ?"
+            params.append(end)
+        params.append(limit)
+        with self.session() as conn:
+            rows = conn.execute(
+                sql + " ORDER BY bm25(frame_fts), f.timestamp LIMIT ?", params
+            ).fetchall()
+        return [_frame(row) for row in rows]
 
     def frame_count(self, run_id: int) -> int:
         with self.session() as conn:
@@ -547,6 +578,19 @@ class Database:
                     "SELECT * FROM processing_runs WHERE kind = ? ORDER BY id", (kind,)
                 ).fetchall()
         return [_run(r) for r in rows]
+
+
+def _frame(row: sqlite3.Row) -> NewFrame:
+    return NewFrame(
+        row["idx"],
+        row["timestamp"],
+        row["path"],
+        row["width"],
+        row["height"],
+        row["dhash"],
+        row["reason"],
+        row["ocr_text"],
+    )
 
 
 def _segment(row: sqlite3.Row, words: tuple[TranscriptWord, ...]) -> TranscriptSegment:

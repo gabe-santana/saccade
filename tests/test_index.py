@@ -10,7 +10,7 @@ import pytest
 
 from saccade.config import ChunkConfig
 from saccade.index.chunking import Chunker, ends_sentence, join_texts
-from saccade.index.database import Database
+from saccade.index.database import Database, NewFrame
 from saccade.index.fts import build_match, light_stem, matched_terms, normalize_text, tokenize
 from saccade.models.segment import TranscriptSegment, segment_id
 from saccade.pipeline import Pack, Packer
@@ -327,3 +327,36 @@ def test_reopening_existing_database_is_safe(tmp_path: Path) -> None:
     run_id = _store(Database(path), ["persisted text"])
     reopened = Database(path)
     assert [s.text for _, s in reopened.segments(run_id)] == ["persisted text"]
+
+
+def test_ocr_migration_preserves_v2_index(db: Database) -> None:
+    transcript_id = _store(db, ["persisted speech"])
+    run = db.create_run(kind="frames", config_key="old", config={}, library_version="test")
+    original = NewFrame(0, 1.25, "frame.jpg", 640, 240, "abcd", "start")
+    with db.session() as conn:
+        db.insert_frames(conn, run.id, [original])
+        with db.transaction(conn):
+            conn.execute("DROP TRIGGER frames_delete_fts")
+            conn.execute("DROP TABLE frame_fts")
+            conn.execute("ALTER TABLE frames DROP COLUMN ocr_text")
+            conn.execute("UPDATE metadata SET value = '2' WHERE key = 'schema_version'")
+    db.close()
+
+    reopened = Database(db.path)
+    assert reopened.frames(run.id) == [original]
+    assert [segment.text for _, segment in reopened.segments(transcript_id)] == ["persisted speech"]
+    match = build_match("persisted")
+    assert match is not None
+    assert reopened.search(transcript_id, match.expression, start=None, end=None, limit=5)
+    recognized = NewFrame(1, 2.5, "next.jpg", 640, 240, "ef01", "change", "Pricing table")
+    with reopened.session() as conn:
+        reopened.insert_frames(conn, run.id, [recognized])
+    match = build_match("pricing")
+    assert match is not None
+    assert reopened.search_frames(run.id, match.expression, start=None, end=None, limit=5) == [
+        recognized
+    ]
+    reopened.close()
+    again = Database(db.path)
+    assert again.frames(run.id) == [original, recognized]
+    again.close()

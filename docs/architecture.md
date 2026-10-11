@@ -88,9 +88,11 @@ src/saccade/
 
 ## Limitations
 
-- **Frames are not "understood" locally.** Saccade selects and stores frames but runs no
-  vision model; there is no OCR or captioning. What is *in* a frame is interpreted only by
-  your LLM, through `ask()` or your own prompt. Search covers speech only.
+- **OCR is optional; captions are not generated locally.** The `ocr` extra recognizes
+  text only in kept JPEGs and stores normalized text in a separate FTS5 table. Search
+  blends speech and frame hits by rank; context and ask label OCR separately from speech.
+  General visual interpretation still belongs to your LLM. Recognition can miss tiny,
+  transient, or unsupported-language text; see [Frames](frames.md).
 - **Frame extraction decodes the video stream.** That is cheap next to ASR at typical
   resolutions, but not free for long 4K files. Use `VisualConfig(keyframes_only=True)` or a
   lower `sample_fps`.

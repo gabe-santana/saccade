@@ -9,6 +9,11 @@ change the API.
 
 ### Added
 
+- Optional `ocr` extra with lazy CPU RapidOCR recognition of kept frames, `VisualConfig.ocr`
+  and `ocr_score`, and `Frame.ocr_text`.
+- Searchable on-screen text: `SearchResult.source="frame"` and `frame_ids`, OCR-only context,
+  and recognized text in ask overviews and retrieved evidence for text-only or image LLMs.
+- Offline OCR tests, schema migration coverage, and an opt-in real rendered-slide test.
 - Project logo, README banner and animated demo (`assets/`).
 - `CONTRIBUTING.md`, `AGENTS.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue and PR
   templates, Dependabot and pre-commit configuration.
@@ -16,6 +21,8 @@ change the API.
 
 ### Changed
 
+- Visual cache version 2 includes OCR settings and engine version; existing frames are
+  rebuilt once. SQLite schema 3 adds frame text and FTS while preserving existing rows.
 - README rewritten as a landing page; reference material moved into `docs/`.
 - Relative README links are rewritten to absolute GitHub URLs on PyPI.
 

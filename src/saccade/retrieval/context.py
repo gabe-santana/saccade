@@ -21,6 +21,7 @@ from saccade.index.database import Database, RunRecord
 from saccade.index.fts import is_cjk
 from saccade.models.context import ContextMetadata, Evidence, VideoContext
 from saccade.models.frame import Frame
+from saccade.models.result import SearchResult
 from saccade.models.segment import TranscriptSegment
 from saccade.models.transcript import TranscriptChunk, TranscriptStatus
 from saccade.retrieval.search import search_transcript
@@ -84,6 +85,7 @@ def build_context(
     options: ContextOptions | None = None,
     token_counter: TokenCounter | None = None,
     frames: FrameLookup | None = None,
+    frame_hits: list[SearchResult] | None = None,
 ) -> VideoContext:
     if max_tokens < 64:
         raise ConfigError("max_tokens must be at least 64.")
@@ -93,10 +95,20 @@ def build_context(
     indexed_until = run.processed_until if run else None
 
     passages = _passages(db, run, query, options) if run is not None else []
-    hits = len(passages)
+    hits = len(passages) + len(frame_hits or [])
 
     header = _header(video_name, duration, language, status, indexed_until, query)
     used = count(header)
+    ocr_chosen: list[SearchResult] = []
+    ocr_blocks: list[str] = []
+    ocr_budget = max_tokens // 2 if passages else max_tokens
+    for hit in frame_hits or []:
+        block = f"[Text on screen at {format_timestamp(hit.start)} | {hit.id}]\n{hit.text}"
+        cost = count(block) + 2
+        if used + cost <= ocr_budget:
+            ocr_chosen.append(hit)
+            ocr_blocks.append(block)
+            used += cost
     chosen: list[tuple[_Passage, str]] = []
     for passage in sorted(passages, key=lambda p: p.rank):
         block = _render(passage.segments, options)
@@ -111,13 +123,25 @@ def build_context(
                 used += count(trimmed[1]) + 2
     chosen.sort(key=lambda item: item[0].start)
 
-    body = [block for _, block in chosen] or ["No transcript passages matched this query."]
+    body = [block for _, block in chosen] + ocr_blocks
+    if not body:
+        body = [
+            "No matching evidence fits this budget."
+            if frame_hits
+            else "No transcript passages matched this query."
+        ]
     text = header + "\n\n" + "\n\n".join(body)
 
     picked: list[Frame] = []
-    if frames is not None and options.frames_per_passage > 0 and chosen:
+    if frames is not None and options.frames_per_passage > 0 and (chosen or ocr_chosen):
         section = "\n\nRelevant visual evidence (frames from the video at these times):"
         candidates = _frames_for(chosen, frames, options.frames_per_passage)
+        seen = {frame.id for frame in candidates}
+        for hit in ocr_chosen:
+            for frame in frames(hit.start, hit.end):
+                if frame.id in hit.frame_ids and frame.id not in seen:
+                    seen.add(frame.id)
+                    candidates.append(frame)
         lines = [f"[{format_timestamp(f.timestamp)} | {f.id}]\n{f.path}" for f in candidates]
         if candidates and used + count(section) <= max_tokens:
             used += count(section)
@@ -141,7 +165,15 @@ def build_context(
         Evidence(id=seg.id, type="transcript", start=seg.start, end=seg.end, text=seg.text)
         for passage, _ in chosen
         for _, seg in passage.segments
-    ] + [Evidence(id=f.id, type="frame", timestamp=f.timestamp) for f in picked]
+    ] + [
+        Evidence(id=hit.id, type="frame", timestamp=hit.start, text=hit.text) for hit in ocr_chosen
+    ]
+    evidence_ids = {item.id for item in evidence}
+    evidence += [
+        Evidence(id=frame.id, type="frame", timestamp=frame.timestamp)
+        for frame in picked
+        if frame.id not in evidence_ids
+    ]
     metadata = ContextMetadata(
         video=video_name,
         duration=duration,
@@ -150,7 +182,7 @@ def build_context(
         indexed_until=indexed_until,
         max_tokens=max_tokens,
         estimated_tokens=count(text),
-        passages=len(chosen),
+        passages=len(chosen) + len(ocr_chosen),
         hits=hits,
         model=(run.config.get("asr") or {}).get("model") if run else None,
     )
@@ -280,6 +312,6 @@ def _header(
     lines += [
         f"QUERY: {query}",
         "",
-        "Relevant evidence (verbatim transcript; times refer to the source video):",
+        "Relevant evidence (source video timestamps):",
     ]
     return "\n".join(lines)
