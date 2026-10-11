@@ -24,6 +24,7 @@ Video(
     threads=None, workers=1,
     cache_dir=None, offline=None, fingerprint="sampled",
     asr_backend=None, vad_factory=None,
+    embedding_model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
 )
 ```
 
@@ -47,6 +48,7 @@ Creating a `Video` is cheap and does no I/O; work happens when you call a method
 | `fingerprint` | `"sampled" \| "strict"` | `"sampled"` | Media identity: sampled bytes (instant) or full SHA-256 |
 | `asr_backend` | `ASRBackend` | faster-whisper | Custom speech recognizer ([Extending](extending.md)) |
 | `vad_factory` | `Callable[[], VoiceActivityDetector]` | Silero | Custom speech detector |
+| `embedding_model` | `str` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Optional FastEmbed model; vectors are cached separately per model and backend version |
 
 `language` and `profile` override the corresponding parts of `asr`.
 
@@ -58,14 +60,19 @@ Creating a `Video` is cheap and does no I/O; work happens when you call a method
 | `transcribe(*, profile=None, force=False, progress=None)` | `Iterator[TranscriptSegment]` | Stream segments, transcribing only what's missing |
 | `transcript()` | `Transcript` | The stored transcript; never transcribes |
 | `chunks()` | `list[TranscriptChunk]` | 20–60 s retrieval chunks |
-| `search(query, *, limit=5, start=None, end=None, expand=0.0)` | `list[SearchResult]` | Full-text search over the transcript |
-| `context(query, *, max_tokens=4000, before=12.0, after=15.0, segment_timestamps=False, token_counter=None)` | `VideoContext` | Token-budgeted, timestamped evidence |
+| `search(query, *, limit=5, start=None, end=None, expand=0.0, mode=None)` | `list[SearchResult]` | Lexical, semantic, or hybrid transcript search |
+| `context(query, *, max_tokens=4000, before=12.0, after=15.0, segment_timestamps=False, token_counter=None, mode=None)` | `VideoContext` | Token-budgeted evidence using the same search mode |
 | `frames(*, start=None, end=None)` | `list[Frame]` | Stored representative frames |
 | `ask(question, *, llm=None, progress=None, explore=None, max_steps=4, max_views=16, max_images=12, image_detail="low", evidence_tokens=48000, max_answer_tokens=8000)` | `Answer` | Answer a question with your LLM ([guide](asking-questions.md)) |
 | `info()` | `VideoInfo` | Metadata and index status |
 | `media_info()` | `MediaInfo` | Container and stream metadata |
 
 Async versions:
+
+`mode` accepts `"lexical"`, `"semantic"`, or `"hybrid"`. The default is hybrid when
+the `embeddings` extra is installed, lexical otherwise. Explicit semantic or hybrid search
+without the extra raises `ConfigError`. Model loading and chunk embedding are lazy;
+`offline=True` requires already cached model files. See [Search](search-and-context.md).
 
 | Async method | Equivalent of |
 |---|---|

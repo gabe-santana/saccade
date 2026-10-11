@@ -10,10 +10,12 @@ import pytest
 
 from saccade.config import ChunkConfig
 from saccade.index.chunking import Chunker, ends_sentence, join_texts
-from saccade.index.database import Database
+from saccade.index.database import Database, NewChunk
 from saccade.index.fts import build_match, light_stem, matched_terms, normalize_text, tokenize
 from saccade.models.segment import TranscriptSegment, segment_id
 from saccade.pipeline import Pack, Packer
+from saccade.retrieval.search import search_transcript
+from saccade.retrieval.semantic import search_semantic
 from saccade.vad.base import SpeechRegion
 
 SR = 16_000
@@ -327,3 +329,137 @@ def test_reopening_existing_database_is_safe(tmp_path: Path) -> None:
     run_id = _store(Database(path), ["persisted text"])
     reopened = Database(path)
     assert [s.text for _, s in reopened.segments(run_id)] == ["persisted text"]
+
+
+class BilingualEncoder:
+    key = "bilingual-test-v1"
+
+    def __init__(self):
+        self.passages = 0
+
+    def encode(self, texts, *, query=False):
+        if not query:
+            self.passages += len(texts)
+        return np.asarray(
+            [
+                [1.0, 0.0] if "sign-in" in text or "autenticacao" in text else [0.0, 1.0]
+                for text in texts
+            ],
+            dtype=np.float32,
+        )
+
+
+def test_semantic_cross_language_cache_and_model_isolation(db):
+    texts = ["A autenticacao falhou.", "O tempo esta bom."]
+    run_id = _store(db, texts, step=40)
+    with db.session() as conn:
+        db.commit_chunks(
+            conn,
+            run_id,
+            [
+                NewChunk(idx, idx * 40, idx * 40 + 39.5, text, idx, idx)
+                for idx, text in enumerate(texts)
+            ],
+        )
+    encoder = BilingualEncoder()
+    assert search_transcript(db, run_id, "sign-in") == []
+    results = search_semantic(db, run_id, "sign-in", encoder)
+    assert results[0].text == texts[0]
+    assert results[0].segment_ids == (segment_id(0),)
+    assert encoder.passages == 2
+    assert search_semantic(db, run_id, "sign-in", encoder) == results
+    assert encoder.passages == 2
+    encoder.key = "bilingual-test-v2"
+    search_semantic(db, run_id, "sign-in", encoder)
+    assert encoder.passages == 4
+    assert search_semantic(db, run_id, "sign-in", encoder, start=40)[0].text == texts[1]
+    assert search_semantic(db, run_id, "sign-in", encoder, end=1)[0].text == texts[0]
+    assert search_semantic(db, run_id, "", encoder) == []
+    db.delete_run(run_id)
+    with db.session() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM chunk_embeddings").fetchone()[0] == 0
+
+
+def test_semantic_video_and_context(make_video, tone_video, monkeypatch):
+    video = make_video(tone_video)
+    video.index()
+    video._encoder = BilingualEncoder()
+    assert video.search("sign-in", mode="lexical") == []
+    results = video.search("sign-in", mode="semantic")
+    assert results and results[0].segment_ids
+    assert video.context("sign-in", mode="semantic").segments
+    assert video.context("sign-in", mode="lexical").segments == []
+    monkeypatch.setattr("saccade.video.available", lambda: True)
+    assert video.search("sign-in") == video.search("sign-in", mode="hybrid")
+
+
+def test_semantic_requires_extra(tmp_path, monkeypatch):
+    from saccade.exceptions import ConfigError
+    from saccade.retrieval.semantic import FastEmbedEncoder
+
+    monkeypatch.setattr("saccade.retrieval.semantic.available", lambda: False)
+    with pytest.raises(ConfigError, match="embeddings"):
+        FastEmbedEncoder("model", tmp_path, offline=True, threads=1)
+
+
+def test_hybrid_fuses_overlapping_passages():
+    from saccade.models.result import SearchResult
+    from saccade.retrieval.ranking import reciprocal_rank_fusion
+
+    lexical = SearchResult(0, 5, "login", 1.0, segment_ids=("s0",))
+    semantic = SearchResult(0, 10, "sign-in", 1.0, segment_ids=("s0", "s1"))
+    other = SearchResult(20, 25, "unrelated", 0.5, segment_ids=("s2",))
+    results = reciprocal_rank_fusion([[lexical], [other, semantic]], limit=2)
+    assert results[0] == lexical
+    assert len(results) == 2
+    assert results[1].score < 1.0
+
+
+@pytest.mark.parametrize("vector", [[[0.0, 0.0]], [[float("nan"), 1.0]], [1.0, 0.0]])
+def test_semantic_rejects_invalid_vectors(db, vector):
+    from saccade.exceptions import ConfigError
+
+    class InvalidEncoder:
+        key = "invalid"
+
+        def encode(self, texts, *, query=False):
+            return np.asarray(vector, dtype=np.float32)
+
+    run_id = _store(db, ["text"])
+    with pytest.raises(ConfigError, match="vector"):
+        search_semantic(db, run_id, "query", InvalidEncoder())
+
+
+def test_embedding_backend_forwards_offline_and_loads_lazily(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from saccade.retrieval.semantic import FastEmbedEncoder
+
+    calls = []
+
+    class FakeModel:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def query_embed(self, texts):
+            return [np.array([1.0, 0.0]) for text in texts]
+
+        passage_embed = query_embed
+
+    monkeypatch.setitem(sys.modules, "fastembed", SimpleNamespace(TextEmbedding=FakeModel))
+    monkeypatch.setattr("saccade.retrieval.semantic.available", lambda: True)
+    monkeypatch.setattr("saccade.retrieval.semantic.version", lambda package: "test")
+    encoder = FastEmbedEncoder("test-model", tmp_path, offline=True, threads=2)
+    assert calls == []
+    assert encoder.encode(["query"], query=True).shape == (1, 2)
+    encoder.encode(["passage"])
+    assert calls == [
+        {
+            "model_name": "test-model",
+            "cache_dir": str(tmp_path),
+            "local_files_only": True,
+            "threads": 2,
+        }
+    ]
+    assert "test-model" in encoder.key

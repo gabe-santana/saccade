@@ -11,10 +11,11 @@ score combines:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from saccade.index.database import SegmentHit
 from saccade.index.fts import MatchQuery, contains_phrase, matched_terms, tokenize
+from saccade.models.result import SearchResult
 
 _EXTRA_HIT_WEIGHT = 0.5
 _PHRASE_BONUS = 1.25
@@ -66,3 +67,28 @@ def score_window(window: HitWindow, match: MatchQuery, text: str) -> float:
         score *= _PHRASE_BONUS
     window.score = score
     return score
+
+
+def reciprocal_rank_fusion(rankings: list[list[SearchResult]], *, limit: int) -> list[SearchResult]:
+    candidates = [result for ranking in rankings for result in ranking]
+    scored = []
+    for result in candidates:
+        identifiers = set(result.segment_ids)
+        score = 0.0
+        for ranking in rankings:
+            for rank, other in enumerate(ranking, start=1):
+                if identifiers.intersection(other.segment_ids):
+                    score += 1.0 / (60 + rank)
+                    break
+        scored.append((score, result))
+    selected: list[SearchResult] = []
+    seen: set[str] = set()
+    top = max((score for score, _ in scored), default=1.0)
+    for score, result in sorted(scored, key=lambda item: item[0], reverse=True):
+        if seen.intersection(result.segment_ids):
+            continue
+        selected.append(replace(result, score=score / top))
+        seen.update(result.segment_ids)
+        if len(selected) == limit:
+            break
+    return selected

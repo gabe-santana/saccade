@@ -21,6 +21,7 @@ from saccade.index.database import Database, RunRecord
 from saccade.index.fts import is_cjk
 from saccade.models.context import ContextMetadata, Evidence, VideoContext
 from saccade.models.frame import Frame
+from saccade.models.result import SearchResult
 from saccade.models.segment import TranscriptSegment
 from saccade.models.transcript import TranscriptChunk, TranscriptStatus
 from saccade.retrieval.search import search_transcript
@@ -28,6 +29,7 @@ from saccade.utils.time import format_span, format_timestamp
 
 TokenCounter = Callable[[str], int]
 FrameLookup = Callable[[float, float], list[Frame]]
+SearchLookup = Callable[[str, int], list[SearchResult]]
 
 _CANDIDATES = 24
 _MERGE_GAP_S = 1.0
@@ -84,6 +86,7 @@ def build_context(
     options: ContextOptions | None = None,
     token_counter: TokenCounter | None = None,
     frames: FrameLookup | None = None,
+    search: SearchLookup | None = None,
 ) -> VideoContext:
     if max_tokens < 64:
         raise ConfigError("max_tokens must be at least 64.")
@@ -92,7 +95,7 @@ def build_context(
     language = run.language if run else None
     indexed_until = run.processed_until if run else None
 
-    passages = _passages(db, run, query, options) if run is not None else []
+    passages = _passages(db, run, query, options, search) if run is not None else []
     hits = len(passages)
 
     header = _header(video_name, duration, language, status, indexed_until, query)
@@ -186,8 +189,18 @@ def _frames_for(
     return sorted(out, key=lambda f: f.timestamp)
 
 
-def _passages(db: Database, run: RunRecord, query: str, options: ContextOptions) -> list[_Passage]:
-    results = search_transcript(db, run.id, query, limit=_CANDIDATES)
+def _passages(
+    db: Database,
+    run: RunRecord,
+    query: str,
+    options: ContextOptions,
+    search: SearchLookup | None = None,
+) -> list[_Passage]:
+    results = (
+        search(query, _CANDIDATES)
+        if search is not None
+        else search_transcript(db, run.id, query, limit=_CANDIDATES)
+    )
     windows = [
         _Passage(max(0.0, r.start - options.before), r.end + options.after, rank, [])
         for rank, r in enumerate(results)

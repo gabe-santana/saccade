@@ -74,6 +74,15 @@ class NewFrame:
 
 
 @dataclass(frozen=True, slots=True)
+class EmbeddingChunk:
+    id: int
+    text: str
+    first_segment: int
+    last_segment: int
+    vector: bytes | None
+
+
+@dataclass(frozen=True, slots=True)
 class SegmentHit:
     idx: int
     segment: TranscriptSegment
@@ -439,6 +448,46 @@ class Database:
             )
             for row in rows
         ]
+
+    def embedding_chunks(
+        self,
+        run_id: int,
+        model_key: str,
+        *,
+        start: float | None = None,
+        end: float | None = None,
+        batch_size: int = 32,
+    ) -> Iterator[list[EmbeddingChunk]]:
+        last_id = 0
+        while True:
+            with self.session() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT c.*, e.vector FROM transcript_chunks c
+                    LEFT JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model_key = ?
+                    WHERE c.run_id = ? AND c.id > ?
+                      AND (? IS NULL OR c.end_s >= ?)
+                      AND (? IS NULL OR c.start_s <= ?)
+                    ORDER BY c.id LIMIT ?
+                    """,
+                    (model_key, run_id, last_id, start, start, end, end, batch_size),
+                ).fetchall()
+            if not rows:
+                return
+            last_id = rows[-1]["id"]
+            yield [
+                EmbeddingChunk(
+                    row["id"], row["text"], row["first_segment"], row["last_segment"], row["vector"]
+                )
+                for row in rows
+            ]
+
+    def store_embeddings(self, model_key: str, vectors: Sequence[tuple[int, bytes]]) -> None:
+        with self.session() as conn, self.transaction(conn):
+            conn.executemany(
+                "INSERT OR IGNORE INTO chunk_embeddings (chunk_id, model_key, vector) VALUES (?, ?, ?)",
+                [(ident, model_key, vector) for ident, vector in vectors],
+            )
 
     def next_indices(self, run_id: int) -> tuple[int, int]:
         with self.session() as conn:

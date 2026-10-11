@@ -8,7 +8,7 @@ results from different configurations.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 TABLES = """
 CREATE TABLE IF NOT EXISTS metadata (
@@ -90,6 +90,13 @@ CREATE TABLE IF NOT EXISTS transcript_chunks (
     first_segment INTEGER NOT NULL,
     last_segment  INTEGER NOT NULL,
     UNIQUE (run_id, idx)
+);
+
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+    chunk_id  INTEGER NOT NULL REFERENCES transcript_chunks(id) ON DELETE CASCADE,
+    model_key TEXT NOT NULL,
+    vector    BLOB NOT NULL,
+    PRIMARY KEY (chunk_id, model_key)
 );
 
 -- v2: representative frames. ``path`` is relative to the run's frame directory.

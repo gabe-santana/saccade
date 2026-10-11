@@ -49,7 +49,15 @@ from saccade.pipeline import (
 )
 from saccade.progress import ProgressCallback, Reporter, Stage
 from saccade.retrieval.context import ContextOptions, TokenCounter, build_context
+from saccade.retrieval.ranking import reciprocal_rank_fusion
 from saccade.retrieval.search import search_transcript
+from saccade.retrieval.semantic import (
+    DEFAULT_MODEL,
+    Encoder,
+    FastEmbedEncoder,
+    available,
+    search_semantic,
+)
 from saccade.utils.cache import FileLock, default_cache_dir, models_dir, video_cache_dir
 from saccade.utils.concurrency import default_threads, iterate_in_thread
 from saccade.vad import create_vad
@@ -190,6 +198,7 @@ class Video:
             contacts it when you call :meth:`ask`.
         device: ``"cuda"`` runs Whisper on an NVIDIA GPU (``pip install "saccade-video[gpu]"``),
             ``"auto"`` uses one when available, ``"cpu"`` is the default.
+        embedding_model: FastEmbed model identity for optional semantic search.
     """
 
     def __init__(
@@ -211,6 +220,7 @@ class Video:
         visual: VisualConfig | None = None,
         llm: LLM | None = None,
         device: Literal["cpu", "cuda", "auto"] | None = None,
+        embedding_model: str = DEFAULT_MODEL,
     ) -> None:
         self.path = Path(path).expanduser().absolute()
         asr = asr or ASRConfig()
@@ -229,6 +239,8 @@ class Video:
         self.chunk_config = chunking or ChunkConfig()
         self.visual_config = visual or VisualConfig()
         self.llm = llm
+        self.embedding_model = embedding_model
+        self._encoder: Encoder | None = None
         self.threads = threads or default_threads()
         self.workers = workers
         self.cache_dir = Path(cache_dir).expanduser() if cache_dir else default_cache_dir()
@@ -646,8 +658,9 @@ class Video:
         start: float | None = None,
         end: float | None = None,
         expand: float = 0.0,
+        mode: Literal["lexical", "semantic", "hybrid"] | None = None,
     ) -> list[SearchResult]:
-        """Find the passages that best match ``query`` (BM25 over the transcript).
+        """Find passages using lexical, semantic, or reciprocal-rank hybrid retrieval.
 
         Works on partial indexes, so it can be used while :meth:`index` is still running.
 
@@ -657,11 +670,43 @@ class Video:
             start: Only consider transcript after this time (seconds).
             end: Only consider transcript before this time (seconds).
             expand: Seconds of surrounding transcript to add to each result.
+            mode: Defaults to hybrid with the embeddings extra installed, lexical otherwise.
         """
+        if mode not in (None, "lexical", "semantic", "hybrid"):
+            raise ConfigError("mode must be lexical, semantic, or hybrid.")
+        if limit < 1 or expand < 0:
+            raise ConfigError("limit must be at least 1 and expand must be >= 0.")
+        mode = mode or ("hybrid" if available() else "lexical")
         run = self._require_run()
-        return search_transcript(
-            self._db(), run.id, query, limit=limit, start=start, end=end, expand=expand
+        db = self._db()
+        if mode == "lexical":
+            return search_transcript(
+                db, run.id, query, limit=limit, start=start, end=end, expand=expand
+            )
+        if self._encoder is None:
+            self._encoder = FastEmbedEncoder(
+                self.embedding_model,
+                models_dir(self.cache_dir) / "embeddings",
+                offline=self.offline,
+                threads=self.threads,
+            )
+        candidates = max(24, limit * 4) if mode == "hybrid" else limit
+        semantic = search_semantic(
+            db,
+            run.id,
+            query,
+            self._encoder,
+            limit=candidates,
+            start=start,
+            end=end,
+            expand=expand,
         )
+        if mode == "semantic":
+            return semantic
+        lexical = search_transcript(
+            db, run.id, query, limit=candidates, start=start, end=end, expand=expand
+        )
+        return reciprocal_rank_fusion([lexical, semantic], limit=limit)
 
     def context(
         self,
@@ -672,6 +717,7 @@ class Video:
         after: float = 15.0,
         segment_timestamps: bool = False,
         token_counter: TokenCounter | None = None,
+        mode: Literal["lexical", "semantic", "hybrid"] | None = None,
     ) -> VideoContext:
         """Build LLM-ready, timestamped evidence for ``query`` within a token budget.
 
@@ -682,6 +728,7 @@ class Video:
             after: Seconds of transcript to include after each hit.
             segment_timestamps: Timestamp every segment inside each passage.
             token_counter: ``str -> int`` using your model's tokenizer.
+            mode: Search mode, with the same default as :meth:`search`.
         """
         run = self._require_run()
         db = self._db()
@@ -699,6 +746,7 @@ class Video:
             ),
             token_counter=token_counter,
             frames=lambda a, b: self.frames(start=a, end=b),
+            search=lambda text, limit: self.search(text, limit=limit, mode=mode),
         )
 
     def ask(

@@ -86,6 +86,21 @@ src/saccade/
   cli.py            the `saccade` command
 ```
 
+## Optional semantic retrieval
+
+The `embeddings` extra adds a lazy FastEmbed ONNX backend. Semantic retrieval embeds
+committed retrieval chunks and scans their vectors with NumPy cosine similarity in batches
+of 32, retaining only the best candidates. SQLite schema v3 adds `chunk_embeddings`, keyed
+by chunk ID and embedding model identity (model name, FastEmbed version, encoding version).
+Vectors are normalized and stored as little-endian float16 BLOBs; deleting a transcript run
+cascades to its vectors. Existing v2 databases upgrade additively without retranscription.
+
+Hybrid retrieval combines semantic chunk ranks with the existing BM25/temporal passage
+ranks using reciprocal-rank fusion. Overlapping passages are deduplicated. `context()`
+uses the same retrieval mode before expansion and token budgeting. Without the extra,
+the public default and base dependencies remain unchanged. Model loading is lazy and honors
+the Video offline setting. Model files use the models cache, under `embeddings/`.
+
 ## Limitations
 
 - **Frames are not "understood" locally.** Saccade selects and stores frames but runs no
@@ -94,8 +109,8 @@ src/saccade/
 - **Frame extraction decodes the video stream.** That is cheap next to ASR at typical
   resolutions, but not free for long 4K files. Use `VisualConfig(keyframes_only=True)` or a
   lower `sample_fps`.
-- **Lexical search only.** There is no synonym or cross-language matching; the light
-  stemmer is deliberately conservative. Semantic search is on the roadmap.
+- **Lexical search without extras.** Synonym and cross-language matching require the
+  optional embeddings extra. Semantic matches are model-dependent, not guaranteed.
 - **Language** is detected once per video, from its first speech. Videos that switch
   languages are transcribed in the first language detected; set `language=` if that is
   wrong.

@@ -9,6 +9,8 @@ change the API.
 
 ### Added
 
+- Optional multilingual semantic and hybrid search (`embeddings` extra), shared by
+  `Video.search()` and `Video.context()`, with model-isolated float16 vector caching.
 - Project logo, README banner and animated demo (`assets/`).
 - `CONTRIBUTING.md`, `AGENTS.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue and PR
   templates, Dependabot and pre-commit configuration.

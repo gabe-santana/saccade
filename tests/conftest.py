@@ -14,6 +14,11 @@ from saccade.vad.silero import SileroVAD
 from support import EnergyModel, ToneASR, place, tone, write_media
 
 
+@pytest.fixture(autouse=True)
+def lexical_default(monkeypatch):
+    monkeypatch.setattr("saccade.video.available", lambda: False)
+
+
 @pytest.fixture
 def cache_dir(tmp_path: Path) -> Path:
     return tmp_path / "cache"

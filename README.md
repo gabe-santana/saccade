@@ -97,6 +97,11 @@ print(answer.total_tokens)  # what it cost (answer.cached_tokens shows the disco
 
 ### 2. No LLM? Search and build context, 100% offline
 
+For optional cross-language and synonym matching, install `saccade-video[embeddings]`.
+Search then defaults to hybrid lexical and semantic ranking; use `mode="lexical"` to keep
+the original behavior. Embedding models run locally after the initial download.
+See [semantic search](docs/search-and-context.md#optional-multilingual-semantic-search).
+
 ```python
 from saccade import Video
 
@@ -238,7 +243,6 @@ answer = await video.aask("...")             # async everything
 Saccade 0.1 covers transcription, frames, search, context and `ask()` with exploration.
 Next up:
 
-- 🧠 **Semantic search:** optional multilingual embeddings with hybrid lexical, semantic and temporal ranking
 - 🗣️ **Speaker diarization:** who said what
 - 🔤 **On-screen text:** OCR for slides and screen recordings, searchable like speech
 - 🍎 **More backends:** whisper.cpp (Apple Silicon / Metal), more LLM providers

@@ -21,6 +21,7 @@ for r in results:
 | `limit` | 5 | Maximum number of results |
 | `start`, `end` | `None` | Restrict to part of the timeline (seconds) |
 | `expand` | 0 | Seconds of surrounding transcript to add to each result |
+| `mode` | `None` | `"lexical"`, `"semantic"`, or `"hybrid"`; auto-selects hybrid when the extra is installed |
 
 Each `SearchResult` has these fields:
 
@@ -44,7 +45,47 @@ How matching works:
 - **Normalisation.** Accents and case are folded, so `configuracao` finds *configuração*.
   Chinese and Japanese are matched by character bigrams.
 
-Search is lexical. It finds the words you use, not synonyms or translations.
+Without the optional extra, search is lexical: it finds words, not synonyms or translations.
+
+### Optional multilingual semantic search
+
+```bash
+pip install "saccade-video[embeddings]"
+```
+
+```python
+video.search("Why did sign-in fail?", mode="semantic")
+video.search("Why did sign-in fail?", mode="hybrid")
+video.context("Why did sign-in fail?", mode="hybrid", max_tokens=4000)
+```
+
+FastEmbed runs a multilingual MiniLM model locally with ONNX Runtime, without PyTorch.
+Semantic search can match an English query to Portuguese speech or match synonyms.
+Hybrid search combines the ranks of semantic chunks and temporally grouped lexical hits
+using reciprocal-rank fusion, suppressing overlapping results. Scores remain relative
+rankings, not confidence estimates.
+
+Installing the extra changes the default search mode to hybrid. Set `mode="lexical"`
+to keep lexical behavior and avoid loading an embedding model. The first semantic query
+downloads the model and embeds retrieval chunks in bounded batches. Later searches reuse
+float16 vectors stored in SQLite. New chunks in a partial index are embedded as they become
+available. Semantic-only search covers committed chunks; hybrid search also sees recent
+segments that are not chunked yet.
+
+Use `Video(..., embedding_model="...")` to select another supported FastEmbed text model.
+Model name and backend version are part of the embedding cache key, separate from the
+transcript run, so switching models does not require retranscription. `offline=True`,
+`SACCADE_OFFLINE=1`, and `HF_HUB_OFFLINE=1` prevent embedding model downloads as well.
+An uncached model must be downloaded before offline semantic search can work.
+
+Warm search still encodes each query. Latency depends on CPU, model, and query length;
+first-use model download and chunk embedding are not representative search timings.
+
+Run `python benchmarks/search.py` to check cross-language retrieval and warm latency on
+240 synthetic 30-second chunks (two hours). Add `--offline` after downloading the model.
+This measures semantic search including query encoding, not transcription, hybrid search,
+or retrieval accuracy on real recordings. A Windows run with four inference threads
+measured 5.35 ms median across ten warm queries; timings are hardware-dependent.
 
 ## `context()`: prompt-ready evidence for a question
 
