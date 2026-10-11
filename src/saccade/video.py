@@ -18,6 +18,7 @@ from typing import Any, Literal
 from saccade._version import PROCESSING_VERSION, __version__
 from saccade.asr.base import ASRBackend
 from saccade.asr.faster_whisper import FasterWhisperBackend
+from saccade.asr.whispercpp import WhisperCppBackend
 from saccade.config import (
     ASRConfig,
     ChunkConfig,
@@ -210,7 +211,7 @@ class Video:
         vad_factory: Callable[[], VoiceActivityDetector] | None = None,
         visual: VisualConfig | None = None,
         llm: LLM | None = None,
-        device: Literal["cpu", "cuda", "auto"] | None = None,
+        device: Literal["cpu", "cuda", "auto", "metal"] | None = None,
     ) -> None:
         self.path = Path(path).expanduser().absolute()
         asr = asr or ASRConfig()
@@ -292,6 +293,17 @@ class Video:
         if self._custom_backend is not None:
             return self._custom_backend
         backend = self._backend
+        if self._asr.backend == "whispercpp":
+            if not isinstance(backend, WhisperCppBackend) or backend.config != self._asr:
+                backend = WhisperCppBackend(
+                    self._asr,
+                    models_dir=models_dir(self.cache_dir),
+                    threads=self.threads,
+                    allow_download=not self.offline,
+                )
+                self._backend = backend
+            backend.reporter = reporter
+            return backend
         if not isinstance(backend, FasterWhisperBackend) or backend.config != self._asr:
             backend = FasterWhisperBackend(
                 self._asr,

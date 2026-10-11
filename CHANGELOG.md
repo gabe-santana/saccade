@@ -9,6 +9,8 @@ change the API.
 
 ### Added
 
+- Optional `whispercpp` ASR extra, selected by `ASRConfig(backend="whispercpp")`, with
+  lazy GGML loading, offline model resolution, and CPU/Apple Silicon Metal selection.
 - Project logo, README banner and animated demo (`assets/`).
 - `CONTRIBUTING.md`, `AGENTS.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue and PR
   templates, Dependabot and pre-commit configuration.

@@ -90,6 +90,44 @@ differently. Switching device therefore reprocesses the video once.
 The first run on a brand-new GPU architecture can take a few extra seconds while CUDA
 compiles kernels; the driver caches the result.
 
+## whisper.cpp and Apple Silicon
+
+```bash
+pip install "saccade-video[whispercpp]"
+```
+
+```python
+from saccade import ASRConfig, Video
+
+video = Video("meeting.mp4", asr=ASRConfig(backend="whispercpp", model="small-q5_1", device="auto"))
+video.index()
+```
+
+The optional pywhispercpp backend requests Metal on Apple Silicon for `device="auto"`;
+elsewhere it uses CPU. A Metal-enabled pywhispercpp build is required for acceleration.
+`device="cpu"` disables GPU use. Models are GGML files, not the default backend's
+CTranslate2 directories. Choose quantization in the model name (for example `small-q5_1`)
+and leave `compute_type="auto"`. The first use downloads missing weights; subsequent
+runs can use `offline=True`. Word timestamps are not yet supported by this adapter.
+
+The adapter uses the same VAD, pack boundaries, and source-timestamp mapping as
+faster-whisper. It serializes model calls; use `workers=1` to avoid queuing work without
+gaining parallel inference. Backend and model identities isolate transcript caches.
+
+No M-series timing has been measured for this implementation yet. Do not infer Metal
+speedups from the Windows/CUDA tables above. On a Mac, pre-download both models, then
+compare the same recording with fresh index caches using:
+
+```bash
+python benchmarks/bench.py meeting.mp4 --asr-backend faster-whisper --device cpu --model small
+python benchmarks/bench.py meeting.mp4 --asr-backend whispercpp --device cpu --model small
+python benchmarks/bench.py meeting.mp4 --asr-backend whispercpp --device metal --model small
+```
+
+The runner records hardware, requested backend/device, model, ASR time, first segment,
+transcription/indexing time, and peak memory. Inspect whisper.cpp system information to
+confirm the installed build supports Metal before reporting acceleration results.
+
 ## CPU tuning
 
 ```python

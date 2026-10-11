@@ -34,7 +34,7 @@ Creating a `Video` is cheap and does no I/O; work happens when you call a method
 | `path` | `str \| PathLike` | | Any media file FFmpeg reads (MP4, MKV, MOV, WEBM, WAV, MP3, ...) |
 | `language` | `str \| None` | `None` | Spoken language (`"en"`, `"pt"`, ...); `None` detects it |
 | `profile` | `"fast" \| "balanced" \| "accurate"` | `None` (balanced) | Model preset |
-| `device` | `"cpu" \| "cuda" \| "auto"` | `None` (cpu) | Where Whisper runs |
+| `device` | `"cpu" \| "cuda" \| "auto" \| "metal"` | `None` (cpu) | Where Whisper runs; Metal requires whispercpp on Apple Silicon |
 | `asr` | `ASRConfig` | `ASRConfig()` | Full speech recognition settings |
 | `vad` | `VadConfig` | `VadConfig()` | Voice activity detection settings |
 | `chunking` | `ChunkConfig` | `ChunkConfig()` | Retrieval chunk sizes |
@@ -104,6 +104,16 @@ All configuration objects are immutable dataclasses. Derive variants with
 | `word_timestamps` | `False` | Store per-word timings |
 | `carry_context` | `True` | Prompt each window with the previous text (CPU, single worker) |
 | `batch_size` | 16 | Speech chunks per batch on GPU |
+| `backend` | `"faster-whisper"` | `"faster-whisper"` or optional `"whispercpp"` |
+
+With `backend="whispercpp"`, `model` is a GGML file or a pywhispercpp model name such as
+`"small-q5_1"`. Quantization comes from that file, so leave `compute_type="auto"`.
+Use `device="auto"` to request Metal on Apple Silicon and CPU elsewhere, or select
+`"cpu"` explicitly. CUDA and word timestamps are not supported by this adapter;
+requesting them raises `ConfigError`. Model calls are serialized even with multiple workers.
+Model files are cached under the models directory's `whispercpp/` subdirectory, and
+`offline=True` disables downloads. Local GGML paths also work offline. Backend, model,
+quantization identity, device, and beam size keep transcript caches separate.
 
 `ASRConfig().with_profile("accurate")` returns a copy with that profile's model, quantization
 and beam size.

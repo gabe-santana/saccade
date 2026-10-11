@@ -22,12 +22,13 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import psutil
 
-from saccade import Video, __version__
+from saccade import ASRConfig, Video, __version__
 from saccade.utils.cache import default_cache_dir, models_dir
 
 QUERIES = [
@@ -85,10 +86,13 @@ class PeakMemory:
 def bench_file(path: Path, args: argparse.Namespace) -> dict[str, Any]:
     cache = Path(tempfile.mkdtemp(prefix="saccade-bench-"))
     os.environ.setdefault("SACCADE_MODELS_DIR", str(models_dir(default_cache_dir())))
+    asr = ASRConfig(backend=args.asr_backend, device=args.device).with_profile(args.profile)
+    if args.model:
+        asr = replace(asr, model=args.model)
     try:
         video = Video(
             path,
-            profile=args.profile,
+            asr=asr,
             threads=args.threads,
             cache_dir=cache,
             language=args.language,
@@ -108,7 +112,7 @@ def bench_file(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         warm_began = time.perf_counter()
         warm = Video(
             path,
-            profile=args.profile,
+            asr=asr,
             threads=args.threads,
             cache_dir=cache,
             language=args.language,
@@ -140,6 +144,8 @@ def bench_file(path: Path, args: argparse.Namespace) -> dict[str, Any]:
             "speech_density_vad": round(summary.speech_seconds / duration, 3) if duration else None,
             "speech_density_source": source.get("speech_density"),
             "model": video.asr_config.model,
+            "backend": video.asr_config.backend,
+            "requested_device": video.asr_config.device,
             "compute_type": video.asr_config.compute_type,
             "beam_size": video.asr_config.beam_size,
             "threads": video.threads,
@@ -170,6 +176,13 @@ def main() -> None:
     parser.add_argument("files", nargs="+", type=Path)
     parser.add_argument("--profile", default="balanced", choices=["fast", "balanced", "accurate"])
     parser.add_argument("--threads", type=int)
+    parser.add_argument(
+        "--asr-backend", default="faster-whisper", choices=["faster-whisper", "whispercpp"]
+    )
+    parser.add_argument("--device", default="cpu", choices=["cpu", "auto", "cuda", "metal"])
+    parser.add_argument(
+        "--model", help="Override the profile's model; GGML name or file for whispercpp"
+    )
     parser.add_argument("--language")
     parser.add_argument("--output", type=Path, default=Path(__file__).parent / "results")
     args = parser.parse_args()

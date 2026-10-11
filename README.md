@@ -97,6 +97,11 @@ print(answer.total_tokens)  # what it cost (answer.cached_tokens shows the disco
 
 ### 2. No LLM? Search and build context, 100% offline
 
+For Apple Silicon or an alternative CPU engine, install `saccade-video[whispercpp]` and
+select `ASRConfig(backend="whispercpp", device="auto")`. See the
+[whisper.cpp guide](docs/performance.md#whispercpp-and-apple-silicon) for GGML models,
+offline operation, limitations, and benchmarking.
+
 ```python
 from saccade import Video
 

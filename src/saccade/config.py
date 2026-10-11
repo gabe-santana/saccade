@@ -32,9 +32,9 @@ class ASRConfig:
     """Speech recognition settings.
 
     Attributes:
-        model: A faster-whisper model name (``"small"``, ``"large-v3"``, ...) or a path to a
-            local CTranslate2 model directory. Multilingual models are the default; English-only
-            ``*.en`` models work but cannot transcribe other languages.
+        model: A faster-whisper model name or local CTranslate2 directory; for ``whispercpp``,
+            a GGML file or model name such as ``"small-q5_1"``. English-only ``*.en`` models
+            work but cannot transcribe other languages.
         compute_type: CTranslate2 quantization. ``"auto"`` (default) is ``int8`` on CPU and
             ``float16`` on GPU; any CTranslate2 type such as ``int8_float16`` can be forced.
         device: ``"cpu"`` (default), ``"cuda"`` (NVIDIA GPU, needs ``pip install "saccade-video[gpu]"``)
@@ -45,6 +45,8 @@ class ASRConfig:
         word_timestamps: Also store per-word timings. Off by default: it costs extra decoding time.
         carry_context: Prompt each 30-second window with the end of the previous one. Improves
             continuity of names and punctuation; ignored when ``workers > 1``.
+        backend: ``"faster-whisper"`` (default) or optional ``"whispercpp"``. The latter uses
+            GGML model files and supports ``device="metal"`` on Apple Silicon.
     """
 
     model: str = "small"
@@ -55,8 +57,11 @@ class ASRConfig:
     word_timestamps: bool = False
     carry_context: bool = True
     batch_size: int = 16
+    backend: Literal["faster-whisper", "whispercpp"] = "faster-whisper"
 
     def __post_init__(self) -> None:
+        if self.backend not in ("faster-whisper", "whispercpp"):
+            raise ConfigError("ASRConfig.backend must be faster-whisper or whispercpp.")
         if self.batch_size < 1:
             raise ConfigError("ASRConfig.batch_size must be >= 1.")
         if not self.model:
