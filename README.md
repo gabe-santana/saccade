@@ -220,6 +220,10 @@ saccade.Video("aula.mp4", language="pt", profile="accurate")   # language, model
 answer = await video.aask("...")             # async everything
 ```
 
+Optional [speaker labeling](docs/transcription.md#speaker-labeling) adds local ONNX speaker
+IDs, renaming, speaker-filtered search and labeled exports with `saccade-video[speakers]`.
+It labels ASR segments, not overlapping voices; the guide includes a measured AMI benchmark.
+
 ## Documentation
 
 | | |
@@ -239,7 +243,7 @@ Saccade 0.1 covers transcription, frames, search, context and `ask()` with explo
 Next up:
 
 - 🧠 **Semantic search:** optional multilingual embeddings with hybrid lexical, semantic and temporal ranking
-- 🗣️ **Speaker diarization:** who said what
+- 🗣️ **Speaker diarization:** improve turn boundaries and overlapping-speech handling
 - 🔤 **On-screen text:** OCR for slides and screen recordings, searchable like speech
 - 🍎 **More backends:** whisper.cpp (Apple Silicon / Metal), more LLM providers
 - 🧹 **Cache management:** `saccade cache list / prune / clear`

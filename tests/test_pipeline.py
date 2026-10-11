@@ -30,8 +30,155 @@ TEXTS = {
 }
 
 
+def test_speaker_clustering_is_bounded_and_resumable(monkeypatch) -> None:
+    from saccade.config import DiarizationConfig
+    from saccade.diarization import SpeakerDiarizer
+
+    config = DiarizationConfig(model="stand-in.onnx", max_speakers=2)
+    vectors = iter([[1.0, 0.0], [0.0, 1.0], [1.0, 0.0], [-1.0, 0.0]])
+    sizes = []
+
+    def embed(self, audio):
+        sizes.append(len(audio))
+        return np.array(next(vectors), dtype=np.float32)
+
+    monkeypatch.setattr(SpeakerDiarizer, "_embed", embed)
+    diarizer = SpeakerDiarizer(config)
+    audio = np.ones(16000 * 10, dtype=np.float32)
+    assert diarizer.label(audio) == "SPEAKER_1"
+    assert diarizer.label(audio) == "SPEAKER_2"
+    restored = SpeakerDiarizer(config)
+    restored.restore(json.loads(json.dumps(diarizer.snapshot())))
+    assert restored.label(audio) == "SPEAKER_1"
+    assert restored.label(audio) == "SPEAKER_2"
+    assert len(restored.snapshot()["centroids"]) == 2
+    assert sizes == [48000] * 4
+    assert restored.label(np.zeros(100, dtype=np.float32)) is None
+
+
+def test_speaker_clustering_rejects_invalid_embeddings(monkeypatch) -> None:
+    from saccade import TranscriptionError
+    from saccade.config import DiarizationConfig
+    from saccade.diarization import SpeakerDiarizer
+
+    diarizer = SpeakerDiarizer(DiarizationConfig(model="stand-in.onnx"))
+    monkeypatch.setattr(SpeakerDiarizer, "_embed", lambda self, audio: np.array([np.nan]))
+    with pytest.raises(TranscriptionError, match="finite"):
+        diarizer.label(np.ones(16000, dtype=np.float32))
+
+
+def test_speaker_storage_migrates_and_saves_state(tmp_path: Path) -> None:
+    from saccade.index.database import Database
+    from saccade.models.segment import TranscriptSegment
+
+    path = tmp_path / "index.db"
+    db = Database(path)
+    with db.session() as conn:
+        conn.execute("ALTER TABLE transcript_segments DROP COLUMN speaker")
+        conn.execute("UPDATE metadata SET value = '2' WHERE key = 'schema_version'")
+    db.close()
+    db = Database(path)
+    run = db.create_run(kind="transcript", config_key="speakers", config={}, library_version="test")
+    state = {"centroids": [[1.0, 0.0]], "counts": [1]}
+    segment = TranscriptSegment("seg_00000", 0, 1, "hello", speaker="SPEAKER_1")
+    with db.session() as conn:
+        db.commit_batch(
+            conn,
+            run.id,
+            segments=[(0, segment)],
+            regions=[],
+            chunks=[],
+            processed_until=1,
+            speech_seconds=1,
+            elapsed_seconds=0,
+            speaker_state=state,
+        )
+    assert db.segments(run.id)[0][1].speaker == "SPEAKER_1"
+    assert db.speaker_state(run.id) == state
+    db.rename_speaker(run.id, "SPEAKER_1", "Ana")
+    assert db.segments(run.id)[0][1].speaker == "Ana"
+    assert db.speaker_state(run.id) == state
+    db.delete_run(run.id)
+    assert db.speaker_state(run.id) is None
+    assert db.speaker_names(run.id) == {}
+    db.close()
+
+
 def expected_segments() -> list[tuple[str, float, float]]:
     return [(f"tone {f}.", s, s + d) for s, f, d in TONE_EVENTS]
+
+
+def test_speaker_labels_resume_search_context_and_exports(
+    make_video, tmp_path: Path, monkeypatch
+) -> None:
+    from saccade import DiarizationConfig
+    from saccade.diarization import SpeakerDiarizer
+
+    path = write_media(
+        tmp_path / "speakers.wav",
+        place(
+            65,
+            [
+                (1, tone(440, 2)),
+                (30, tone(880, 2)),
+                (60, tone(440, 2)),
+            ],
+        ),
+    )
+    model = tmp_path / "speaker.onnx"
+    model.write_bytes(b"stand-in")
+    config = DiarizationConfig(model=str(model))
+
+    def embed(self, audio):
+        spectrum = np.abs(np.fft.rfft(audio))
+        frequency = np.argmax(spectrum) * 16000 / len(audio)
+        return np.array([1, 0] if frequency < 600 else [0, 1], dtype=np.float32)
+
+    monkeypatch.setattr(SpeakerDiarizer, "_embed", embed)
+    video = make_video(path, ToneASR(), diarization=config)
+    iterator = video.transcribe()
+    assert next(iterator).speaker == "SPEAKER_1"
+    iterator.close()
+    assert len(video.transcript()) == 1
+    video.rename_speaker("SPEAKER_1", "Ana")
+    resumed_backend = ToneASR()
+    resumed = make_video(path, resumed_backend, diarization=config)
+    segments = list(resumed.transcribe())
+    assert resumed_backend.calls > 0
+    assert [segment.speaker for segment in segments] == ["Ana", "SPEAKER_2", "Ana"]
+    assert [segment.start for segment in segments] == pytest.approx([1, 30, 60], abs=0.05)
+    assert resumed.search("tone", speaker="SPEAKER_2")[0].segment_ids == ("seg_00001",)
+    assert resumed.search("tone", speaker="Ana", expand=90)[0].segment_ids == (
+        "seg_00000",
+        "seg_00002",
+    )
+    assert resumed.search("tone", speaker="missing") == []
+    assert "| Ana]" in resumed.context("tone").text
+    transcript = resumed.transcript()
+    assert "Ana: tone 440." in transcript.to_srt()
+    assert "<v Ana>tone 440.</v>" in transcript.to_vtt()
+    assert json.loads(transcript.to_json())["segments"][0]["speaker"] == "Ana"
+    from saccade.ask import build_messages
+    from saccade.exceptions import ConfigError
+
+    messages, _, _, mode = build_messages(
+        resumed, "Who spoke?", evidence_tokens=48000, max_images=0, images=False
+    )
+    assert mode == "full" and "| Ana]" in str(messages)
+    with pytest.raises(ValueError, match="already assigned"):
+        resumed.rename_speaker("SPEAKER_2", "Ana")
+    with pytest.raises(ConfigError, match="canonical"):
+        resumed.rename_speaker("SPEAKER_1", "SPEAKER_2")
+    with pytest.raises(ValueError, match="Unknown"):
+        resumed.rename_speaker("SPEAKER_3", "Someone")
+    backend = ToneASR()
+    assert list(make_video(path, backend, diarization=config).transcribe()) == segments
+    assert backend.calls == 0
+    plain = make_video(path, ToneASR())
+    assert (
+        plain._cache_key(plain._backend_for())[0] != resumed._cache_key(resumed._backend_for())[0]
+    )
+    assert all(segment.speaker is None for segment in plain.transcribe())
 
 
 def test_timestamps_are_restored_to_source_timeline(make_video, tone_video: Path) -> None:

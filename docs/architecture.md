@@ -99,7 +99,9 @@ src/saccade/
 - **Language** is detected once per video, from its first speech. Videos that switch
   languages are transcribed in the first language detected; set `language=` if that is
   wrong.
-- **No speaker labels.** Segments are not attributed to speakers (no diarization yet).
+- **Segment-level speaker labels only.** Optional ONNX embeddings and bounded online
+  clustering label one voice per ASR segment; overlapping speech and turns within a segment
+  are not separated. Cluster state commits with each pack; aliases are stored separately.
 - **Thai, Lao, Khmer and other unspaced scripts** besides Chinese and Japanese are indexed
   as whole runs, so substring search inside them is limited.
 - **Token budgets** are estimated (≈3.5 characters, or 1 CJK character, per token) unless

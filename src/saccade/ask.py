@@ -51,6 +51,8 @@ def build_messages(
     header = _header(video)
     chunks = transcript.chunks
     full_text = "\n\n".join(f"[{format_span(c.start, c.end)} | {c.id}]\n{c.text}" for c in chunks)
+    if any(segment.speaker for segment in transcript.segments):
+        full_text = "\n".join(str(segment) for segment in transcript.segments)
     mode: Literal["full", "retrieved"]
 
     if not transcript.segments:

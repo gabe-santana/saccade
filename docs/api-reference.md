@@ -4,7 +4,7 @@ Everything below is importable from the top-level package (`import saccade`) unl
 path is shown.
 
 - [`Video`](#video)
-- [Configuration](#configuration): `ASRConfig`, `VadConfig`, `ChunkConfig`, `VisualConfig`, `PROFILES`
+- [Configuration](#configuration): `ASRConfig`, `DiarizationConfig`, `VadConfig`, `ChunkConfig`, `VisualConfig`, `PROFILES`
 - [LLM connections](#llm-connections): `azure`, `openai`, `ollama`, `AzureFoundry`, `OpenAICompatible`, `LLM`
 - [Results](#results): `IndexSummary`, `IndexJob`, `VideoInfo`, `Transcript`, `TranscriptSegment`, `TranscriptWord`, `TranscriptChunk`, `SearchResult`, `VideoContext`, `Evidence`, `ContextMetadata`, `Frame`, `Answer`
 - [Progress](#progress): `ProgressEvent`, `Stage`
@@ -19,7 +19,7 @@ Video(
     path,
     *,
     language=None, profile=None, device=None,
-    asr=None, vad=None, chunking=None, visual=None,
+    asr=None, vad=None, chunking=None, visual=None, diarization=None,
     llm=None,
     threads=None, workers=1,
     cache_dir=None, offline=None, fingerprint="sampled",
@@ -39,6 +39,7 @@ Creating a `Video` is cheap and does no I/O; work happens when you call a method
 | `vad` | `VadConfig` | `VadConfig()` | Voice activity detection settings |
 | `chunking` | `ChunkConfig` | `ChunkConfig()` | Retrieval chunk sizes |
 | `visual` | `VisualConfig` | `VisualConfig()` | Representative frame settings |
+| `diarization` | `DiarizationConfig \| None` | `None` | Optional local speaker labeling; requires the `speakers` extra |
 | `llm` | `LLM` | `None` | The LLM `ask()` uses |
 | `threads` | `int` | Physical cores, max 8 | Inference threads (CPU) |
 | `workers` | `int` | 1 | Concurrent Whisper calls |
@@ -58,7 +59,8 @@ Creating a `Video` is cheap and does no I/O; work happens when you call a method
 | `transcribe(*, profile=None, force=False, progress=None)` | `Iterator[TranscriptSegment]` | Stream segments, transcribing only what's missing |
 | `transcript()` | `Transcript` | The stored transcript; never transcribes |
 | `chunks()` | `list[TranscriptChunk]` | 20–60 s retrieval chunks |
-| `search(query, *, limit=5, start=None, end=None, expand=0.0)` | `list[SearchResult]` | Full-text search over the transcript |
+| `search(query, *, limit=5, start=None, end=None, expand=0.0, speaker=None)` | `list[SearchResult]` | Full-text search; optionally restrict to a canonical speaker ID or assigned name, including expanded context |
+| `rename_speaker(speaker, name)` | `None` | Assign a display name to a canonical ID (e.g. `SPEAKER_1`) in the selected run without reprocessing |
 | `context(query, *, max_tokens=4000, before=12.0, after=15.0, segment_timestamps=False, token_counter=None)` | `VideoContext` | Token-budgeted, timestamped evidence |
 | `frames(*, start=None, end=None)` | `list[Frame]` | Stored representative frames |
 | `ask(question, *, llm=None, progress=None, explore=None, max_steps=4, max_views=16, max_images=12, image_detail="low", evidence_tokens=48000, max_answer_tokens=8000)` | `Answer` | Answer a question with your LLM ([guide](asking-questions.md)) |
@@ -107,6 +109,31 @@ All configuration objects are immutable dataclasses. Derive variants with
 
 `ASRConfig().with_profile("accurate")` returns a copy with that profile's model, quantization
 and beam size.
+
+### `DiarizationConfig`
+
+Opt-in, CPU-only ONNX speaker embeddings and bounded online clustering. No speaker
+runtime is imported or model loaded when `Video(..., diarization=None)` (the default).
+
+| Field | Default | Meaning |
+|---|---|---|
+| `model` | Required | Local sherpa-onnx-compatible speaker embedding ONNX file; never downloaded automatically |
+| `threshold` | `0.55` | Cosine similarity required to reuse a cluster; strictly between -1 and 1 |
+| `max_speakers` | `16` | Maximum retained clusters, from 1 to 128; additional voices use the closest cluster |
+| `window_s` | `3.0` | Maximum central audio window per ASR segment, at most 30 seconds |
+| `min_seconds` | `0.5` | Minimum segment audio to label, at least 0.25 and no greater than `window_s` |
+
+Configuration and model SHA-256 participate in the transcript cache key. Labels and
+cluster state are committed together so interrupted indexing resumes with stable IDs.
+Aliases are stored separately and persist across reopening the index; a forced rebuild
+starts a new run and removes its old labels and aliases. Names must be unique within a
+run and contain 1-80 printable characters. Another `SPEAKER_*` ID cannot be used as a name.
+Unknown IDs and duplicate names raise `ValueError`; invalid names raise `ConfigError`.
+Pass the canonical ID when renaming an existing alias.
+
+One label is assigned per ASR segment, not per word. Short or insufficient speech can be
+unlabeled. Overlap and speaker changes inside a segment are not resolved. See
+[speaker labeling and the measured AMI result](transcription.md#speaker-labeling).
 
 ### `PROFILES`
 
@@ -222,8 +249,12 @@ Members: `text`, `to_srt()`, `to_vtt()`, `to_json()`, `to_dict()`, `len()` and i
 
 | Type | Fields |
 |---|---|
-| `TranscriptSegment` | `id`, `start`, `end`, `text`, `language`, `confidence`, `no_speech_prob`, `words`; property `duration` |
+| `TranscriptSegment` | `id`, `start`, `end`, `text`, `language`, `confidence`, `no_speech_prob`, `words`, `speaker: str \| None = None`; property `duration` |
 | `TranscriptWord` | `text`, `start`, `end`, `probability` |
+
+`TranscriptSegment.speaker` is a canonical label or its assigned display name. JSON omits
+the field when it is `None`. SRT uses a name prefix, VTT uses an escaped voice tag, and
+context/LLM transcript evidence includes labels. Plain `.text` remains the spoken text.
 
 ### `TranscriptChunk`
 

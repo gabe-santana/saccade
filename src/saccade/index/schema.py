@@ -8,7 +8,7 @@ results from different configurations.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 TABLES = """
 CREATE TABLE IF NOT EXISTS metadata (
@@ -65,10 +65,23 @@ CREATE TABLE IF NOT EXISTS transcript_segments (
     language       TEXT,
     confidence     REAL,
     no_speech_prob REAL,
+    speaker        TEXT,
     chunk_idx      INTEGER,
     UNIQUE (run_id, idx)
 );
 CREATE INDEX IF NOT EXISTS transcript_segments_time ON transcript_segments (run_id, start_s);
+
+CREATE TABLE IF NOT EXISTS speaker_states (
+    run_id INTEGER PRIMARY KEY REFERENCES processing_runs(id) ON DELETE CASCADE,
+    state_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS speaker_names (
+    run_id INTEGER NOT NULL REFERENCES processing_runs(id) ON DELETE CASCADE,
+    speaker TEXT NOT NULL,
+    name TEXT NOT NULL,
+    PRIMARY KEY (run_id, speaker)
+);
 
 CREATE TABLE IF NOT EXISTS transcript_words (
     segment_id  INTEGER NOT NULL REFERENCES transcript_segments(id) ON DELETE CASCADE,

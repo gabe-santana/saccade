@@ -216,6 +216,12 @@ def _render(segments: list[tuple[int, TranscriptSegment]], options: ContextOptio
     first, last = segs[0], segs[-1]
     ident = first.id if first.id == last.id else f"{first.id}–{last.id}"
     head = f"[{format_span(first.start, max(s.end for s in segs))} | {ident}]"
+    if any(segment.speaker for segment in segs):
+        lines = [
+            f"[{format_timestamp(segment.start)} | {segment.speaker or 'UNKNOWN'}] {segment.text.strip()}"
+            for segment in segs
+        ]
+        return head + "\n" + "\n".join(lines)
     if options.segment_timestamps:
         lines = [f"({format_timestamp(s.start)}) {s.text.strip()}" for s in segs]
         return head + "\n" + "\n".join(lines)

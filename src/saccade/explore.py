@@ -334,9 +334,5 @@ def _read(session: _Session, start: float, end: float) -> str:
     session.steps.append(step)
     session.reporter(Stage.EXPLORE, step)
     segments = session.video.transcript().segments
-    lines = [
-        f"[{format_span(s.start, s.end)}] {s.text}"
-        for s in segments
-        if s.end >= start and s.start <= end
-    ]
+    lines = [str(segment) for segment in segments if segment.end >= start and segment.start <= end]
     return ("\n".join(lines) or "Nothing was said in that range.")[:_MAX_TRANSCRIPT_CHARS]

@@ -9,12 +9,21 @@ change the API.
 
 ### Added
 
+- Opt-in speaker labeling with `DiarizationConfig` and the `speakers` extra: local ONNX
+  embeddings, bounded resumable clustering, `TranscriptSegment.speaker`, speaker-filtered
+  search, `Video.rename_speaker()`, labeled context/prompts, SRT/VTT and JSON exports.
+  Includes a reproducible AMI measurement (37.38% DER on ES2002a's first five minutes);
+  attribution is segment-level and does not resolve overlapping voices.
+
 - Project logo, README banner and animated demo (`assets/`).
 - `CONTRIBUTING.md`, `AGENTS.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue and PR
   templates, Dependabot and pre-commit configuration.
 - `docs/architecture.md`, covering pipeline internals, design notes and limitations.
 
 ### Changed
+
+- Index schema v3 adds nullable speaker labels, per-run cluster checkpoints and aliases;
+  existing transcripts are preserved and disabled diarization keeps existing cache keys.
 
 - README rewritten as a landing page; reference material moved into `docs/`.
 - Relative README links are rewritten to absolute GitHub URLs on PyPI.

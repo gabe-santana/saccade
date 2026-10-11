@@ -21,6 +21,7 @@ from saccade.asr.faster_whisper import FasterWhisperBackend
 from saccade.config import (
     ASRConfig,
     ChunkConfig,
+    DiarizationConfig,
     FingerprintMode,
     Profile,
     VadConfig,
@@ -28,6 +29,7 @@ from saccade.config import (
     VisualStrategy,
     validate_profile,
 )
+from saccade.diarization import SpeakerDiarizer
 from saccade.exceptions import AudioStreamNotFoundError, ConfigError, NotIndexedError
 from saccade.index.database import Database, RunRecord, utcnow
 from saccade.llm.base import LLM
@@ -190,6 +192,7 @@ class Video:
             contacts it when you call :meth:`ask`.
         device: ``"cuda"`` runs Whisper on an NVIDIA GPU (``pip install "saccade-video[gpu]"``),
             ``"auto"`` uses one when available, ``"cpu"`` is the default.
+        diarization: Opt-in segment-level speaker labeling with a local ONNX embedding model.
     """
 
     def __init__(
@@ -211,6 +214,7 @@ class Video:
         visual: VisualConfig | None = None,
         llm: LLM | None = None,
         device: Literal["cpu", "cuda", "auto"] | None = None,
+        diarization: DiarizationConfig | None = None,
     ) -> None:
         self.path = Path(path).expanduser().absolute()
         asr = asr or ASRConfig()
@@ -230,6 +234,7 @@ class Video:
         self.visual_config = visual or VisualConfig()
         self.llm = llm
         self.threads = threads or default_threads()
+        self._diarizer = SpeakerDiarizer(diarization, threads=self.threads) if diarization else None
         self.workers = workers
         self.cache_dir = Path(cache_dir).expanduser() if cache_dir else default_cache_dir()
         self.offline = (
@@ -305,7 +310,7 @@ class Video:
         return backend
 
     def _cache_material(self, backend: ASRBackend) -> dict[str, Any]:
-        return {
+        material = {
             "processing_version": PROCESSING_VERSION,
             "asr": backend.identity,
             "language": self._asr.language,
@@ -315,6 +320,9 @@ class Video:
             "chunking": asdict(self.chunk_config),
             "packing": [PACK_SECONDS, FIRST_PACK_SECONDS, MAX_PACK_SPAN_S, MAX_JOIN_GAP_S],
         }
+        if self._diarizer is not None:
+            material["diarization"] = self._diarizer.identity
+        return material
 
     def _cache_key(self, backend: ASRBackend) -> tuple[str, dict[str, Any]]:
         material = self._cache_material(backend)
@@ -410,6 +418,7 @@ class Video:
                 duration=info.duration,
                 workers=self.workers,
                 stream_index=info.primary_audio.index if info.primary_audio else None,
+                diarizer=self._diarizer,
             )
             yield from run_transcription(context, run)
             final = db.get_run_by_id(run.id)
@@ -633,6 +642,21 @@ class Video:
             chunks=tuple(db.chunks(run.id)),
         )
 
+    def rename_speaker(self, speaker: str, name: str) -> None:
+        """Name a canonical speaker label in the selected transcript without reprocessing.
+
+        Pass the original ``SPEAKER_1`` label even when changing an existing alias.
+        Names must be printable, nonempty strings of at most 80 characters.
+        """
+        name = name.strip()
+        if not name or len(name) > 80 or not name.isprintable():
+            raise ConfigError("Speaker names must be 1-80 printable characters.")
+        if name.startswith("SPEAKER_") and name != speaker:
+            raise ConfigError("Speaker names cannot use another canonical speaker label.")
+        with FileLock(self.index_dir / "index.lock"):
+            run = self._require_run()
+            self._db().rename_speaker(run.id, speaker, name)
+
     def chunks(self) -> list[TranscriptChunk]:
         """Retrieval chunks (20–60 s of consecutive segments), ready for your own RAG store."""
         run = self._require_run()
@@ -646,6 +670,7 @@ class Video:
         start: float | None = None,
         end: float | None = None,
         expand: float = 0.0,
+        speaker: str | None = None,
     ) -> list[SearchResult]:
         """Find the passages that best match ``query`` (BM25 over the transcript).
 
@@ -657,10 +682,18 @@ class Video:
             start: Only consider transcript after this time (seconds).
             end: Only consider transcript before this time (seconds).
             expand: Seconds of surrounding transcript to add to each result.
+            speaker: Restrict segments to a canonical speaker label or assigned name.
         """
         run = self._require_run()
         return search_transcript(
-            self._db(), run.id, query, limit=limit, start=start, end=end, expand=expand
+            self._db(),
+            run.id,
+            query,
+            limit=limit,
+            start=start,
+            end=end,
+            expand=expand,
+            speaker=speaker,
         )
 
     def context(

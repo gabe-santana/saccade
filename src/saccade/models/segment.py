@@ -33,6 +33,7 @@ class TranscriptSegment:
             probability that the text is correct.
         no_speech_prob: Whisper's probability that the window contained no speech.
         words: Word timings, empty unless word timestamps were requested.
+        speaker: Speaker label or assigned name; None when diarization is disabled/unassigned.
     """
 
     id: str
@@ -43,6 +44,7 @@ class TranscriptSegment:
     confidence: float | None = None
     no_speech_prob: float | None = None
     words: tuple[TranscriptWord, ...] = field(default_factory=tuple)
+    speaker: str | None = None
 
     @property
     def duration(self) -> float:
@@ -52,10 +54,13 @@ class TranscriptSegment:
         data = asdict(self)
         if not self.words:
             data.pop("words")
+        if self.speaker is None:
+            data.pop("speaker")
         return data
 
     def __str__(self) -> str:
-        return f"[{format_span(self.start, self.end)}] {self.text}"
+        speaker = f" | {self.speaker}" if self.speaker else ""
+        return f"[{format_span(self.start, self.end)}{speaker}] {self.text}"
 
 
 def segment_id(index: int) -> str:

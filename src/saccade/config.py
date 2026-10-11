@@ -76,6 +76,32 @@ class ASRConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class DiarizationConfig:
+    """Optional segment-level speaker labeling using a local ONNX embedding model.
+
+    ``model`` is a sherpa-onnx-compatible speaker embedding file. ``threshold`` is
+    the minimum cosine similarity to reuse a speaker; ``max_speakers`` bounds memory.
+    At most ``window_s`` seconds from each ASR segment are embedded.
+    """
+
+    model: str
+    threshold: float = 0.55
+    max_speakers: int = 16
+    window_s: float = 3.0
+    min_seconds: float = 0.5
+
+    def __post_init__(self) -> None:
+        if not self.model:
+            raise ConfigError("DiarizationConfig.model must be a local ONNX embedding file.")
+        if not -1.0 < self.threshold < 1.0:
+            raise ConfigError("DiarizationConfig.threshold must be in (-1, 1).")
+        if not 1 <= self.max_speakers <= 128:
+            raise ConfigError("DiarizationConfig.max_speakers must be in [1, 128].")
+        if not 0.25 <= self.min_seconds <= self.window_s <= 30.0:
+            raise ConfigError("DiarizationConfig requires 0.25 <= min_seconds <= window_s <= 30.")
+
+
+@dataclass(frozen=True, slots=True)
 class VadConfig:
     """Voice activity detection settings (Silero VAD).
 

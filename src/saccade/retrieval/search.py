@@ -37,6 +37,7 @@ def search_transcript(
     end: float | None = None,
     expand: float = 0.0,
     options: SearchOptions | None = None,
+    speaker: str | None = None,
 ) -> list[SearchResult]:
     """Rank passages of the transcript against ``query``.
 
@@ -58,6 +59,7 @@ def search_transcript(
         start=start,
         end=end,
         limit=max(64, limit * options.candidates_per_result),
+        speaker=speaker,
     )
     if not hits:
         return []
@@ -76,7 +78,8 @@ def search_transcript(
             rows = db.segments(run_id, start=window.start - expand, end=window.end + expand)
         else:
             rows = db.segments_between(run_id, window.first_idx, window.last_idx)
-        segments = [s for _, s in rows]
+        display_speaker = db.speaker_names(run_id).get(speaker, speaker) if speaker else None
+        segments = [s for _, s in rows if speaker is None or s.speaker == display_speaker]
         results.append(
             SearchResult(
                 start=segments[0].start,

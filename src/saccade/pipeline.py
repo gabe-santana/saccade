@@ -22,13 +22,14 @@ import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
 
 from saccade.asr.base import ASRBackend, ASRSegment
 from saccade.config import ASRConfig, ChunkConfig
+from saccade.diarization import SpeakerDiarizer
 from saccade.index.chunking import Chunker
 from saccade.index.database import Database, NewChunk, RunRecord, utcnow
 from saccade.media.audio import SAMPLE_RATE, AudioBlock, Samples, decode_audio
@@ -301,6 +302,8 @@ class PipelineContext:
     pack_seconds: float = PACK_SECONDS
     stream_index: int | None = None
 
+    diarizer: SpeakerDiarizer | None = None
+
 
 @dataclass
 class _State:
@@ -322,6 +325,8 @@ def run_transcription(ctx: PipelineContext, run: RunRecord) -> Iterator[Transcri
     Yields only newly produced segments. The caller must hold the index lock.
     """
     db = ctx.db
+    if ctx.diarizer is not None:
+        ctx.diarizer.restore(db.speaker_state(run.id))
     next_segment, next_chunk = db.next_indices(run.id)
     state = _State(
         run=run,
@@ -526,6 +531,15 @@ def _commit(
             if item.no_speech_prob is not None
             else None,
             words=words,
+            speaker=ctx.diarizer.label(
+                pack.audio[
+                    max(0, round(item.start * pack.sample_rate)) : max(
+                        0, round(item.end * pack.sample_rate)
+                    )
+                ]
+            )
+            if ctx.diarizer is not None
+            else None,
         )
         segments.append((state.next_segment, segment))
         state.next_segment += 1
@@ -543,6 +557,7 @@ def _commit(
         processed_until=pack.end,
         speech_seconds=pack.speech_seconds,
         elapsed_seconds=elapsed,
+        speaker_state=ctx.diarizer.snapshot() if ctx.diarizer is not None else None,
     )
     state.position = max(state.position, pack.end)
     state.new_segments += len(segments)
@@ -560,8 +575,13 @@ def _commit(
         segments=len(segments),
         seconds=elapsed,
     )
+    names = ctx.db.speaker_names(state.run.id) if ctx.diarizer is not None else {}
     for _, segment in segments:
-        yield segment
+        yield (
+            replace(segment, speaker=names.get(segment.speaker, segment.speaker))
+            if segment.speaker
+            else segment
+        )
 
 
 def _mark_interrupted(db: Database, run_id: int, error: BaseException | None) -> None:

@@ -156,6 +156,12 @@ class Database:
                 # Statement by statement: executescript() would commit our transaction.
                 for statement in filter(str.strip, TABLES.split(";")):
                     conn.execute(statement)
+                columns = {
+                    column["name"]
+                    for column in conn.execute("PRAGMA table_info(transcript_segments)")
+                }
+                if "speaker" not in columns:
+                    conn.execute("ALTER TABLE transcript_segments ADD COLUMN speaker TEXT")
                 self._create_fts(conn)
                 conn.execute(
                     "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?)",
@@ -288,6 +294,7 @@ class Database:
         processed_until: float,
         speech_seconds: float,
         elapsed_seconds: float,
+        speaker_state: dict[str, Any] | None = None,
     ) -> None:
         """Atomically append one transcribed block: segments, FTS rows, chunks, progress."""
         with self.transaction(conn):
@@ -299,8 +306,8 @@ class Database:
                 cursor = conn.execute(
                     """
                     INSERT INTO transcript_segments (run_id, idx, start_s, end_s, text, language,
-                                                     confidence, no_speech_prob)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                                     confidence, no_speech_prob, speaker)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         run_id,
@@ -311,6 +318,7 @@ class Database:
                         seg.language,
                         seg.confidence,
                         seg.no_speech_prob,
+                        seg.speaker,
                     ),
                 )
                 rowid = cursor.lastrowid
@@ -330,6 +338,11 @@ class Database:
                         ],
                     )
             self._insert_chunks(conn, run_id, chunks)
+            if speaker_state is not None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO speaker_states (run_id, state_json) VALUES (?, ?)",
+                    (run_id, json.dumps(speaker_state, allow_nan=False)),
+                )
             conn.execute(
                 """
                 UPDATE processing_runs
@@ -345,6 +358,41 @@ class Database:
     ) -> None:
         with self.transaction(conn):
             self._insert_chunks(conn, run_id, chunks)
+
+    def speaker_state(self, run_id: int) -> dict[str, Any] | None:
+        with self.session() as conn:
+            row = conn.execute(
+                "SELECT state_json FROM speaker_states WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        return dict(json.loads(row["state_json"])) if row else None
+
+    def speaker_names(self, run_id: int) -> dict[str, str]:
+        with self.session() as conn:
+            return dict(
+                conn.execute(
+                    "SELECT speaker, name FROM speaker_names WHERE run_id = ?", (run_id,)
+                ).fetchall()
+            )
+
+    def rename_speaker(self, run_id: int, speaker: str, name: str) -> None:
+        with self.session() as conn, self.transaction(conn):
+            if (
+                conn.execute(
+                    "SELECT 1 FROM transcript_segments WHERE run_id = ? AND speaker = ? LIMIT 1",
+                    (run_id, speaker),
+                ).fetchone()
+                is None
+            ):
+                raise ValueError(f"Unknown speaker label: {speaker}")
+            if conn.execute(
+                "SELECT 1 FROM speaker_names WHERE run_id = ? AND name = ? AND speaker != ?",
+                (run_id, name, speaker),
+            ).fetchone():
+                raise ValueError(f"Speaker name is already assigned: {name}")
+            conn.execute(
+                "INSERT OR REPLACE INTO speaker_names (run_id, speaker, name) VALUES (?, ?, ?)",
+                (run_id, speaker, name),
+            )
 
     @staticmethod
     def _insert_chunks(conn: sqlite3.Connection, run_id: int, chunks: Sequence[NewChunk]) -> None:
@@ -395,7 +443,8 @@ class Database:
         with self.session() as conn:
             rows = conn.execute(sql, params).fetchall()
             words = self._words(conn, [r["id"] for r in rows]) if with_words else {}
-        return [(row["idx"], _segment(row, words.get(row["id"], ()))) for row in rows]
+        names = self.speaker_names(run_id)
+        return [(row["idx"], _segment(row, words.get(row["id"], ()), names)) for row in rows]
 
     def segments_between(
         self, run_id: int, first_idx: int, last_idx: int
@@ -405,7 +454,8 @@ class Database:
                 "SELECT * FROM transcript_segments WHERE run_id = ? AND idx BETWEEN ? AND ? ORDER BY idx",
                 (run_id, first_idx, last_idx),
             ).fetchall()
-        return [(row["idx"], _segment(row, ())) for row in rows]
+        names = self.speaker_names(run_id)
+        return [(row["idx"], _segment(row, (), names)) for row in rows]
 
     @staticmethod
     def _words(conn: sqlite3.Connection, ids: list[int]) -> dict[int, tuple[TranscriptWord, ...]]:
@@ -451,7 +501,14 @@ class Database:
         return (0 if seg is None else seg + 1, 0 if chk is None else chk + 1)
 
     def search(
-        self, run_id: int, match: str, *, start: float | None, end: float | None, limit: int
+        self,
+        run_id: int,
+        match: str,
+        *,
+        start: float | None,
+        end: float | None,
+        limit: int,
+        speaker: str | None = None,
     ) -> list[SegmentHit]:
         sql = """
             SELECT s.*, bm25(segment_fts) AS rank
@@ -459,6 +516,12 @@ class Database:
             WHERE segment_fts MATCH ? AND s.run_id = ?
         """
         params: list[Any] = [match, run_id]
+        if speaker is not None:
+            sql += (
+                " AND (s.speaker = ? OR s.speaker IN"
+                " (SELECT speaker FROM speaker_names WHERE run_id = ? AND name = ?))"
+            )
+            params.extend([speaker, run_id, speaker])
         if start is not None:
             sql += " AND s.end_s >= ?"
             params.append(start)
@@ -469,7 +532,10 @@ class Database:
         params.append(limit)
         with self.session() as conn:
             rows = conn.execute(sql, params).fetchall()
-        return [SegmentHit(row["idx"], _segment(row, ()), float(row["rank"])) for row in rows]
+        names = self.speaker_names(run_id)
+        return [
+            SegmentHit(row["idx"], _segment(row, (), names), float(row["rank"])) for row in rows
+        ]
 
     def stats(self, run_id: int) -> RunStats:
         with self.session() as conn:
@@ -549,7 +615,9 @@ class Database:
         return [_run(r) for r in rows]
 
 
-def _segment(row: sqlite3.Row, words: tuple[TranscriptWord, ...]) -> TranscriptSegment:
+def _segment(
+    row: sqlite3.Row, words: tuple[TranscriptWord, ...], names: dict[str, str] | None = None
+) -> TranscriptSegment:
     return TranscriptSegment(
         id=segment_id(row["idx"]),
         start=row["start_s"],
@@ -559,6 +627,7 @@ def _segment(row: sqlite3.Row, words: tuple[TranscriptWord, ...]) -> TranscriptS
         confidence=row["confidence"],
         no_speech_prob=row["no_speech_prob"],
         words=words,
+        speaker=(names or {}).get(row["speaker"], row["speaker"]),
     )
 
 

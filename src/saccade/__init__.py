@@ -12,7 +12,14 @@ Without an LLM everything stays local: ``video.index()``, ``video.search()``,
 """
 
 from saccade._version import __version__
-from saccade.config import PROFILES, ASRConfig, ChunkConfig, VadConfig, VisualConfig
+from saccade.config import (
+    PROFILES,
+    ASRConfig,
+    ChunkConfig,
+    DiarizationConfig,
+    VadConfig,
+    VisualConfig,
+)
 from saccade.exceptions import (
     AudioStreamNotFoundError,
     ConfigError,
@@ -54,6 +61,7 @@ __all__ = [
     "ConfigError",
     "ContextMetadata",
     "DatabaseError",
+    "DiarizationConfig",
     "Evidence",
     "Frame",
     "IndexJob",

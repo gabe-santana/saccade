@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
+from html import escape
 from typing import Any, Literal
 
 from saccade.models.segment import TranscriptSegment
@@ -68,14 +69,17 @@ class Transcript:
 
     def to_srt(self) -> str:
         blocks = [
-            f"{i}\n{format_srt_time(s.start)} --> {format_srt_time(s.end)}\n{s.text}\n"
+            f"{i}\n{format_srt_time(s.start)} --> {format_srt_time(s.end)}\n"
+            f"{escape(s.speaker) + ': ' if s.speaker else ''}{s.text}\n"
             for i, s in enumerate(self.segments, start=1)
         ]
         return "\n".join(blocks)
 
     def to_vtt(self) -> str:
         cues = [
-            f"{format_vtt_time(s.start)} --> {format_vtt_time(s.end)}\n{s.text}\n"
+            f"{format_vtt_time(s.start)} --> {format_vtt_time(s.end)}\n"
+            f"{'<v ' + escape(s.speaker) + '>' if s.speaker else ''}{s.text}"
+            f"{'</v>' if s.speaker else ''}\n"
             for s in self.segments
         ]
         return "WEBVTT\n\n" + "\n".join(cues)
@@ -96,4 +100,4 @@ class Transcript:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
 
     def __str__(self) -> str:
-        return "\n".join(f"[{format_span(s.start, s.end)}] {s.text}" for s in self.segments)
+        return "\n".join(str(segment) for segment in self.segments)
