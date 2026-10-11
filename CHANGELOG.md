@@ -9,6 +9,8 @@ change the API.
 
 ### Added
 
+- Cross-platform eSpeak NG real-model integration tests, with cached Linux CI on relevant
+  changes and nightly, plus weekly Windows and macOS runs.
 - Project logo, README banner and animated demo (`assets/`).
 - `CONTRIBUTING.md`, `AGENTS.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue and PR
   templates, Dependabot and pre-commit configuration.

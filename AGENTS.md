@@ -20,7 +20,7 @@ pytest tests/test_pipeline.py -k seam                  # a focused subset
 ruff check src tests examples benchmarks               # lint
 ruff format src tests examples benchmarks              # format (100 columns)
 mypy                                                   # strict type check of src/saccade
-SACCADE_INTEGRATION=1 pytest -m integration            # real models; Windows only (SAPI TTS)
+SACCADE_INTEGRATION=1 pytest -m integration            # real models; requires eSpeak NG
 ```
 
 Run `ruff check`, `ruff format --check`, `mypy` and `pytest` before you consider a change

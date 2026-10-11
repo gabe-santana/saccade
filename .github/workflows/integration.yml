@@ -1,0 +1,68 @@
+name: Real-model integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/integration.yml"
+  schedule:
+    - cron: "23 4 * * 1-6"
+    - cron: "23 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  integration:
+    name: Real models (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event.schedule == '23 4 * * 0') && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+    env:
+      SACCADE_INTEGRATION: "1"
+      SACCADE_TEST_MODEL: small
+      SACCADE_MODELS_DIR: ${{ github.workspace }}/.cache/integration-models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - uses: actions/cache@v4
+        with:
+          path: .cache/integration-models
+          key: integration-models-v1-${{ runner.os }}-${{ runner.arch }}-small
+      - name: Install eSpeak NG (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng
+      - name: Install eSpeak NG (macOS)
+        if: runner.os == 'macOS'
+        run: brew install espeak-ng
+      - name: Extract eSpeak NG (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'espeak-ng.msi'
+          $target = Join-Path $env:RUNNER_TEMP 'espeak-portable'
+          Invoke-WebRequest 'https://github.com/espeak-ng/espeak-ng/releases/download/1.52.0/espeak-ng.msi' -OutFile $msi
+          $process = Start-Process msiexec.exe -ArgumentList @('/a', "`"$msi`"", '/qn', "TARGETDIR=`"$target`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "eSpeak extraction failed: $($process.ExitCode)" }
+          $executable = Join-Path $target 'eSpeak NG/espeak-ng.exe'
+          if (!(Test-Path $executable)) { throw 'eSpeak executable missing' }
+          "SACCADE_ESPEAK=$executable" >> $env:GITHUB_ENV
+          "ESPEAK_DATA_PATH=$target/eSpeak NG/espeak-ng-data" >> $env:GITHUB_ENV
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -m integration -q --durations=5

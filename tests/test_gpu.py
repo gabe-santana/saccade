@@ -63,11 +63,9 @@ def test_video_device_option(tmp_path: Path) -> None:
 @pytest.mark.integration
 @pytest.mark.skipif(cuda_device_count() == 0, reason="no NVIDIA GPU")
 def test_real_gpu_batched_transcription(tmp_path: Path) -> None:
-    from support import silence, tts, tts_available, write_media
+    from support import espeak_tts, silence, write_media
 
-    if not tts_available("en"):
-        pytest.skip("no TTS voice")
-    speech = tts("The deployment failed because the authentication secret expired.", "en")
+    speech = espeak_tts("The deployment failed because the authentication secret expired.", "en")
     audio = np.concatenate([silence(1.0), speech, silence(40.0), speech, silence(1.0)])
     path = write_media(tmp_path / "gpu.mp4", audio)
     from saccade.utils.cache import default_cache_dir, models_dir

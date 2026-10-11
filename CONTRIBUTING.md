@@ -83,10 +83,26 @@ new tests instead of real models.
 SACCADE_INTEGRATION=1 pytest -m integration
 ```
 
-These run the real faster-whisper + Silero stack on synthesised speech. They download the
-`base` model on first run, and the speech synthesis currently uses Windows SAPI voices, so
-they only run on Windows. Making them cross-platform is an
-[open issue](https://github.com/gabe-santana/saccade/issues).
+These run the real faster-whisper + Silero stack on eSpeak NG speech on Linux, Windows and
+macOS. Install `espeak-ng` with your system package manager (`apt-get install espeak-ng`
+on Debian/Ubuntu, `brew install espeak-ng` on macOS), or use the
+[official Windows release](https://github.com/espeak-ng/espeak-ng/releases).
+Set `SACCADE_ESPEAK` to the executable if it is not on PATH. For an extracted Windows
+distribution, also set `ESPEAK_DATA_PATH` to its `espeak-ng-data` directory.
+In PowerShell, set `$env:SACCADE_INTEGRATION = "1"` before running pytest and remove it
+with `Remove-Item Env:SACCADE_INTEGRATION` afterward.
+
+The first run downloads `small`; `SACCADE_TEST_MODEL` overrides it. This model reliably
+detects the synthetic Portuguese fixture, whereas `base` did not in local validation.
+`SACCADE_MODELS_DIR` selects a reusable model cache, separate from temporary test indexes.
+The tests assert detected language, searchable words, and timestamps within 0.6 seconds
+after a long silence. Missing eSpeak fails the opted-in CPU tests instead of skipping them.
+The GPU test still skips on machines without NVIDIA hardware.
+
+The real-model workflow runs Linux on main, relevant PRs and nightly, with Windows and
+macOS weekly. Manual dispatch runs all three. CI caches model downloads and pip packages;
+the ordinary CI suite remains offline. A local warm-cache Windows CPU run took 16 seconds
+for the three CPU tests; full hosted-job timings depend on dependency installation.
 
 ## Project principles
 

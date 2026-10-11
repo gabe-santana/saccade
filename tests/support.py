@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -130,6 +131,24 @@ def decode_all(path: Path) -> np.ndarray:
 # -- speech synthesis (integration tests only) ---------------------------------------------
 
 VOICES = {"en": "en-US", "pt": "pt-BR"}
+
+
+def espeak_tts(text: str, language: str) -> np.ndarray:
+    """Synthesize cross-platform test speech with eSpeak NG as 16 kHz mono float32."""
+    executable = os.environ.get("SACCADE_ESPEAK") or shutil.which("espeak-ng")
+    if not executable:
+        raise RuntimeError("Install espeak-ng or set SACCADE_ESPEAK to its executable path.")
+    with tempfile.TemporaryDirectory() as folder:
+        wav = Path(folder) / "speech.wav"
+        subprocess.run(
+            [executable, "-v", language, "-s", "150", "-w", str(wav), "--stdin"],
+            input=text,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+        return decode_all(wav)
 
 
 def tts_available(language: str) -> bool:

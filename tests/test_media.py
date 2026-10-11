@@ -4,6 +4,7 @@ import itertools
 import shutil
 from fractions import Fraction
 from pathlib import Path
+from unittest.mock import Mock
 
 import av
 import numpy as np
@@ -17,6 +18,43 @@ from saccade import (
 )
 from saccade.media import decode_audio, fingerprint, probe
 from support import SR, decode_all, place, tone, write_media
+
+
+def test_espeak_missing_binary_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    import support
+
+    monkeypatch.delenv("SACCADE_ESPEAK", raising=False)
+    monkeypatch.setattr(support.shutil, "which", lambda executable: None)
+    with pytest.raises(RuntimeError, match="Install espeak-ng"):
+        support.espeak_tts("Hello", "en")
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_espeak_synthesis_contract(monkeypatch: pytest.MonkeyPatch, override: bool) -> None:
+    import support
+
+    executable = "C:/speech tools/espeak-ng.exe"
+    monkeypatch.delenv("SACCADE_ESPEAK", raising=False)
+    if override:
+        monkeypatch.setenv("SACCADE_ESPEAK", executable)
+    monkeypatch.setattr(support.shutil, "which", lambda name: None if override else executable)
+    synthesize = Mock()
+    samples = tone(440, 1.0)
+    decode = Mock(return_value=samples)
+    monkeypatch.setattr(support.subprocess, "run", synthesize)
+    monkeypatch.setattr(support, "decode_all", decode)
+
+    assert support.espeak_tts("Bom dia, autenticação", "pt") is samples
+    wav = decode.call_args.args[0]
+    synthesize.assert_called_once_with(
+        [executable, "-v", "pt", "-s", "150", "-w", str(wav), "--stdin"],
+        input="Bom dia, autenticação",
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    assert not wav.parent.exists()
 
 
 @pytest.mark.parametrize("suffix", [".mp4", ".mkv", ".mov", ".webm", ".wav", ".mp3"])

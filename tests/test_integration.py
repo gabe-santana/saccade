@@ -1,9 +1,7 @@
 """Real faster-whisper + Silero runs on synthesized speech.
 
-Run with ``SACCADE_INTEGRATION=1``. Uses Windows SAPI voices to synthesise speech (tests
-for languages without an installed voice are skipped) and the model named by
-``SACCADE_TEST_MODEL`` (default ``small``), which must already be downloaded or be
-downloadable.
+Run with ``SACCADE_INTEGRATION=1`` and eSpeak NG installed. The model named by
+``SACCADE_TEST_MODEL`` (default ``small``) must be downloaded or downloadable.
 """
 
 from __future__ import annotations
@@ -15,7 +13,7 @@ import numpy as np
 import pytest
 
 from saccade import Video
-from support import silence, tts, tts_available, write_media
+from support import espeak_tts, silence, write_media
 
 pytestmark = pytest.mark.integration
 
@@ -45,10 +43,9 @@ def shared_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def _speech_video(tmp_path: Path, language: str) -> tuple[Path, float]:
-    if not tts_available(language):
-        pytest.skip(f"no TTS voice for {language}")
     first, second, _ = SCRIPTS[language]
-    a, b = tts(first, language), tts(second, language)
+    voice = "pt-br" if language == "pt" else "en-us"
+    a, b = espeak_tts(first, voice), espeak_tts(second, voice)
     gap_start = 2.0 + len(a) / 16_000
     audio = np.concatenate([silence(2.0), a, silence(45.0), b, silence(1.5)])
     second_start = gap_start + 45.0
