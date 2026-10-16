@@ -151,6 +151,16 @@ transcript, the thumbnails and the images fetched so far. To keep costs down:
   cache prompt prefixes bill the repeated part at a large discount. Azure OpenAI does this
   automatically; `answer.cached_tokens` shows how much was cached.
 
+`answer.cost()` turns those token counts into a price. Saccade does not hard-code provider
+prices (they change), so pass the current rates as USD per million tokens:
+
+```python
+cost = answer.cost(input=0.25, cached_input=0.025, output=2.00)
+```
+
+`cached_input` defaults to `input` when omitted. Reasoning tokens are already part of
+`output_tokens` for OpenAI-style usage, so they are billed at `output` and not counted twice.
+
 Images are already sized for cost. Full frames are sent at 1024 px and zooms at 768 px,
 about 425 tokens each.
 

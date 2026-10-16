@@ -245,6 +245,35 @@ def test_answer_token_usage(interview) -> None:
     assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (30, 12, 42)
 
 
+def test_answer_cost() -> None:
+    plain = saccade.Answer(
+        "q", "a", [], [], "full", usage={"prompt_tokens": 1000, "completion_tokens": 200}
+    )
+    assert plain.cost(input=1.0, output=2.0) == pytest.approx((1000 * 1.0 + 200 * 2.0) / 1_000_000)
+
+    cached = saccade.Answer(
+        "q",
+        "a",
+        [],
+        [],
+        "full",
+        usage={
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "prompt_tokens_details": {"cached_tokens": 400},
+        },
+    )
+    assert cached.cost(input=1.0, output=2.0, cached_input=0.1) == pytest.approx(
+        (600 * 1.0 + 400 * 0.1 + 200 * 2.0) / 1_000_000
+    )
+    # cached_input defaults to input
+    assert cached.cost(input=1.0, output=2.0) == pytest.approx((1000 * 1.0 + 200 * 2.0) / 1_000_000)
+
+
+def test_answer_cost_without_usage() -> None:
+    assert saccade.Answer("q", "a", [], [], "full").cost(input=1.0, output=2.0) == 0.0
+
+
 def test_clients_send_tools(server) -> None:
     from saccade.explore import TOOLS
 

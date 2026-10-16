@@ -9,6 +9,8 @@ change the API.
 
 ### Added
 
+- `Answer.cost(input, output, cached_input=None)` estimates an answer's price from
+  per-million-token rates (cached tokens billed separately; defaults to `input`).
 - Timestamped Markdown transcript export via `Transcript.to_markdown()` and `saccade transcribe -f md`.
 - Project logo, README banner and animated demo (`assets/`).
 - `CONTRIBUTING.md`, `AGENTS.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue and PR
