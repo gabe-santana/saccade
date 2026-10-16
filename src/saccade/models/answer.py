@@ -74,6 +74,43 @@ class Answer:
             return self.input_tokens + self.output_tokens
         return total
 
+    def cost(
+        self,
+        *,
+        input: float,
+        output: float,
+        cached_input: float | None = None,
+    ) -> float:
+        """Estimate what this answer cost, given prices per million tokens.
+
+        Saccade never hard-codes provider prices, so pass the current ones:
+
+        ```python
+        answer.cost(input=0.25, cached_input=0.025, output=2.00)  # USD per 1M tokens
+        ```
+
+        Cached input tokens are billed at ``cached_input``, the rest of the input at
+        ``input``. Reasoning tokens are already part of ``output_tokens`` for OpenAI-style
+        usage, so they are billed at ``output`` (they are not double-counted).
+
+        Args:
+            input: Price per million uncached input tokens.
+            output: Price per million output tokens.
+            cached_input: Price per million cached input tokens. Defaults to ``input``.
+
+        Returns:
+            The estimated cost in the same unit as the prices, or ``0.0`` when the
+            endpoint reported no usage.
+        """
+        cached_price = input if cached_input is None else cached_input
+        prompt = self.input_tokens
+        completion = self.output_tokens
+        if prompt is None and completion is None:
+            return 0.0
+        cached = max(0, min(self.cached_tokens, prompt)) if prompt is not None else 0
+        uncached = (prompt or 0) - cached
+        return (uncached * input + cached * cached_price + (completion or 0) * output) / 1_000_000
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "question": self.question,
